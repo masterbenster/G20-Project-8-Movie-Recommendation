@@ -7,6 +7,11 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 
+try:
+    from scripts.ranking_eval import build_candidate_groups, default_max_ranking_events, read_csv_gz
+except ModuleNotFoundError:
+    from ranking_eval import build_candidate_groups, default_max_ranking_events, read_csv_gz
+
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
@@ -14,14 +19,6 @@ PROCESSED_DIR = DATA_DIR / "processed"
 RAW_DIR = DATA_DIR / "raw"
 RESULTS_DIR = DATA_DIR / "results" / "collab_filtering"
 MODELS_DIR = DATA_DIR / "models" / "als"
-
-
-def _read_csv_gz(path: pathlib.Path, dtypes=None, usecols=None) -> pd.DataFrame:
-    if dtypes is None and usecols is None:
-        return pd.read_csv(path, compression="gzip")
-    if dtypes is None:
-        return pd.read_csv(path, compression="gzip", usecols=usecols)
-    return pd.read_csv(path, compression="gzip", usecols=usecols, dtype=dtypes)
 
 
 def _rmse_mae(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
@@ -32,7 +29,7 @@ def _rmse_mae(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
 
 
 def _metrics_from_scores_onepos(
-    user_indices: np.ndarray,
+    event_ids: np.ndarray,
     pos_movie_indices: np.ndarray,
     movie_indices_for_scores: np.ndarray,
     scores_for_scores: np.ndarray,
@@ -47,33 +44,31 @@ def _metrics_from_scores_onepos(
       excluding the positive OR including it depending on construction.
 
     We expect a specific construction:
-    - For each user u, there are M candidate movies (pos + negatives) and we have:
-      user_indices length = num_users * M
+    - For each held-out event, there are M candidate movies (pos + negatives) and we have:
+      event_ids length = num_events * M
       movie_indices_for_scores includes the positive movie exactly once per user.
     - We assume score arrays correspond 1:1 with movie_indices_for_scores.
     """
     ks = sorted(ks)
-    max_k = max(ks)
 
-    # Ensure stable grouping by user.
-    order_u = np.argsort(user_indices, kind="stable")
-    user_indices = user_indices[order_u]
+    # Ensure stable grouping by event id.
+    order_u = np.argsort(event_ids, kind="stable")
+    event_ids = event_ids[order_u]
     pos_movie_indices = pos_movie_indices[order_u]
     movie_indices_for_scores = movie_indices_for_scores[order_u]
     scores_for_scores = scores_for_scores[order_u]
 
     # Group boundaries
-    boundaries = np.flatnonzero(user_indices[1:] != user_indices[:-1]) + 1
+    boundaries = np.flatnonzero(event_ids[1:] != event_ids[:-1]) + 1
     starts = np.concatenate(([0], boundaries))
-    ends = np.concatenate((boundaries, [len(user_indices)]))
-    num_users = len(starts)
+    ends = np.concatenate((boundaries, [len(event_ids)]))
+    num_events = len(starts)
 
     prec_sum = {k: 0.0 for k in ks}
     rec_sum = {k: 0.0 for k in ks}
     ndcg_sum = {k: 0.0 for k in ks}
 
     for s, e in zip(starts, ends):
-        u = int(user_indices[s])
         pos_movie = int(pos_movie_indices[s])
         cand_movies = movie_indices_for_scores[s:e]
         cand_scores = scores_for_scores[s:e]
@@ -96,9 +91,9 @@ def _metrics_from_scores_onepos(
                 ndcg_sum[k] += 1.0 / float(np.log2(rank_pos + 1.0))
 
     return {
-        **{f"precision@{k}": prec_sum[k] / num_users for k in ks},
-        **{f"recall@{k}": rec_sum[k] / num_users for k in ks},
-        **{f"ndcg@{k}": ndcg_sum[k] / num_users for k in ks},
+        **{f"precision@{k}": prec_sum[k] / num_events for k in ks},
+        **{f"recall@{k}": rec_sum[k] / num_events for k in ks},
+        **{f"ndcg@{k}": ndcg_sum[k] / num_events for k in ks},
     }
 
 
@@ -234,7 +229,6 @@ def score_knn_user_item_normalized(
 
 def evaluate_knn_ranking_for_test_negs(
     test_negs_df: pd.DataFrame,
-    test_df: pd.DataFrame,
     neighbors: list[np.ndarray],
     sims: list[np.ndarray],
     train_df_for_user_history: pd.DataFrame,
@@ -251,25 +245,19 @@ def evaluate_knn_ranking_for_test_negs(
     ):
         user_hist.setdefault(int(u), {})[int(i)] = float(r)
 
-    # Candidate set per user: [pos] + negs (derived from test_negs_df)
-    # test_df has one row per user (pos)
-    user_pos = test_df[["user_index", "movie_index"]].copy()
-    user_pos = user_pos.rename(columns={"movie_index": "pos_movie_index"})
+    test_negs_df_sorted = test_negs_df.sort_values(["event_id", "neg_movie_index"], kind="stable")
+    grouped = test_negs_df_sorted.groupby("event_id", sort=False)
 
-    # Sort for deterministic grouping
-    test_negs_df_sorted = test_negs_df.sort_values(["user_index", "neg_movie_index"], kind="stable")
-    grouped = test_negs_df_sorted.groupby("user_index", sort=False)
-
-    user_indices = []
+    event_ids = []
     pos_movie_indices = []
     cand_movie_indices = []
     cand_scores = []
 
     # We'll build candidate scoring arrays and then compute metrics from scores.
-    max_k = max(ks)
-    for u, g in grouped:
-        u = int(u)
-        pos_movie = int(user_pos.loc[user_pos["user_index"] == u, "pos_movie_index"].iloc[0])
+    for event_id, g in grouped:
+        event_id = int(event_id)
+        u = int(g["user_index"].iloc[0])
+        pos_movie = int(g["pos_movie_index"].iloc[0])
         negs = g["neg_movie_index"].to_numpy(dtype=np.int32, copy=False)
         candidates = np.concatenate(([pos_movie], negs))
         scores = score_knn_user_items(
@@ -279,18 +267,18 @@ def evaluate_knn_ranking_for_test_negs(
             sims=sims,
         )
 
-        user_indices.extend([u] * len(candidates))
+        event_ids.extend([event_id] * len(candidates))
         pos_movie_indices.extend([pos_movie] * len(candidates))
         cand_movie_indices.extend(candidates.tolist())
         cand_scores.extend(scores.tolist())
 
-    user_indices = np.asarray(user_indices, dtype=np.int32)
+    event_ids = np.asarray(event_ids, dtype=np.int64)
     pos_movie_indices = np.asarray(pos_movie_indices, dtype=np.int32)
     cand_movie_indices = np.asarray(cand_movie_indices, dtype=np.int32)
     cand_scores = np.asarray(cand_scores, dtype=np.float32)
 
     return _metrics_from_scores_onepos(
-        user_indices=user_indices,
+        event_ids=event_ids,
         pos_movie_indices=pos_movie_indices,
         movie_indices_for_scores=cand_movie_indices,
         scores_for_scores=cand_scores,
@@ -304,7 +292,9 @@ def train_and_evaluate_spark_als_residual_biases(
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
+    val_events_df: pd.DataFrame,
     val_negs_df: pd.DataFrame,
+    test_events_df: pd.DataFrame,
     test_negs_df: pd.DataFrame,
     num_users: int,
     num_items: int,
@@ -312,9 +302,12 @@ def train_and_evaluate_spark_als_residual_biases(
     reg_param: float,
     max_iter: int,
     bias_lambda: float,
+    num_user_blocks: int,
+    num_item_blocks: int,
     seed: int,
     ks: list[int],
     export_artifacts_dir: pathlib.Path | None = None,
+    compute_val_metrics: bool = True,
 ) -> dict:
     """
     Train Spark ALS on residual ratings:
@@ -371,6 +364,8 @@ def train_and_evaluate_spark_als_residual_biases(
         rank=rank,
         maxIter=max_iter,
         regParam=float(reg_param),
+        numUserBlocks=int(num_user_blocks),
+        numItemBlocks=int(num_item_blocks),
         implicitPrefs=False,
         nonnegative=False,
         seed=seed,
@@ -429,10 +424,16 @@ def train_and_evaluate_spark_als_residual_biases(
         return pred.select("user_index", "movie_index", "rating_pred").toPandas()
 
     # Rating prediction metrics on val/test.
-    val_pred_pairs = val_df[["user_index", "movie_index"]].copy()
-    val_pred = _predict_pairs(val_pred_pairs, "val_pred")
-    val_pred = val_pred.merge(val_df[["user_index", "movie_index", "rating"]], on=["user_index", "movie_index"], how="inner")
-    rmse_val, mae_val = _rmse_mae(val_pred["rating"].to_numpy(dtype=np.float32), val_pred["rating_pred"].to_numpy(dtype=np.float32))
+    if compute_val_metrics:
+        val_pred_pairs = val_df[["user_index", "movie_index"]].copy()
+        val_pred = _predict_pairs(val_pred_pairs, "val_pred")
+        val_pred = val_pred.merge(val_df[["user_index", "movie_index", "rating"]], on=["user_index", "movie_index"], how="inner")
+        rmse_val, mae_val = _rmse_mae(
+            val_pred["rating"].to_numpy(dtype=np.float32),
+            val_pred["rating_pred"].to_numpy(dtype=np.float32),
+        )
+    else:
+        rmse_val, mae_val = None, None
 
     test_pred_pairs = test_df[["user_index", "movie_index"]].copy()
     test_pred = _predict_pairs(test_pred_pairs, "test_pred")
@@ -443,37 +444,44 @@ def train_and_evaluate_spark_als_residual_biases(
     # IMPORTANT: Do this fully in Spark to avoid driver OOM from collecting millions of predictions.
     from pyspark.sql.window import Window
 
-    def _ranking_metrics_spark(pos_df_pd: pd.DataFrame, negs_df_pd: pd.DataFrame) -> dict[str, float]:
+    def _ranking_metrics_spark(events_df_pd: pd.DataFrame, negs_df_pd: pd.DataFrame) -> dict[str, float]:
         """
-        One-positive-per-user candidate construction:
-          cand = {pos(u)} U {negs(u)} with is_pos flag.
-        Metrics are computed as mean over users of:
+        One-positive-per-event candidate construction:
+          cand = {pos(event)} U {negs(event)} with is_pos flag.
+        Metrics are computed as mean over held-out events of:
           precision@k = (1/k) * I(rank_pos<=k)
           recall@k    = I(rank_pos<=k)
           ndcg@k      = I(rank_pos<=k) / log2(rank_pos+1)
         """
-        pos_sdf = spark.createDataFrame(pos_df_pd[["user_index", "movie_index"]].copy())
+        pos_events = events_df_pd[["event_id", "user_index", "pos_movie_index"]].copy()
+        pos_tmp = pos_events.rename(columns={"pos_movie_index": "movie_index"})
+        pos_sdf = spark.createDataFrame(pos_tmp[["event_id", "user_index", "movie_index"]].copy())
         pos_sdf = pos_sdf.withColumn("is_pos", F.lit(1))
 
-        neg_tmp = negs_df_pd[["user_index", "neg_movie_index"]].copy().rename(columns={"neg_movie_index": "movie_index"})
-        neg_sdf = spark.createDataFrame(neg_tmp[["user_index", "movie_index"]].copy())
+        neg_tmp = negs_df_pd[["event_id", "user_index", "neg_movie_index"]].copy()
+        neg_tmp = neg_tmp.rename(columns={"neg_movie_index": "movie_index"})
+        neg_sdf = spark.createDataFrame(neg_tmp[["event_id", "user_index", "movie_index"]].copy())
         neg_sdf = neg_sdf.withColumn("is_pos", F.lit(0))
 
         cand_sdf = pos_sdf.unionByName(neg_sdf)
 
         # Predict residuals then add biases back to get rating_pred.
-        pairs_sdf = cand_sdf.select("user_index", "movie_index")
-        pred = als_model.transform(pairs_sdf).select("user_index", "movie_index", "prediction")
+        pred = als_model.transform(cand_sdf.select("event_id", "user_index", "movie_index")).select(
+            "event_id",
+            "user_index",
+            "movie_index",
+            "prediction",
+        )
         pred = pred.join(bu_sdf, on="user_index", how="left").join(bi_sdf, on="movie_index", how="left")
         residual_pred = F.when(F.isnan(pred["prediction"]), F.lit(0.0)).otherwise(pred["prediction"])
         pred = pred.withColumn("rating_pred", residual_pred + float(mu) + pred["b_u"] + pred["b_i"])
 
-        cand_pred = pred.join(cand_sdf.select("user_index", "movie_index", "is_pos"), on=["user_index", "movie_index"], how="inner")
+        cand_pred = pred.join(cand_sdf.select("event_id", "user_index", "movie_index", "is_pos"), on=["event_id", "user_index", "movie_index"], how="inner")
 
-        w = Window.partitionBy("user_index").orderBy(F.col("rating_pred").desc(), F.col("movie_index").desc())
+        w = Window.partitionBy("event_id").orderBy(F.col("rating_pred").desc(), F.col("movie_index").desc())
         ranked = cand_pred.withColumn("rn", F.row_number().over(w))
 
-        pos_ranks = ranked.filter(F.col("is_pos") == 1).select("user_index", "rn")
+        pos_ranks = ranked.filter(F.col("is_pos") == 1).select("event_id", "rn")
 
         # Precompute log2 base (Spark doesn't guarantee log2 across all versions).
         log2_denom = F.log(F.col("rn").cast("double") + F.lit(1.0)) / F.log(F.lit(2.0))
@@ -495,21 +503,22 @@ def train_and_evaluate_spark_als_residual_biases(
         # Ensure native floats
         return {k: float(v) for k, v in row.items()}
 
-    # Val metrics
-    val_pos_df = val_df[["user_index", "movie_index"]].copy()
-    val_rank_metrics = _ranking_metrics_spark(val_pos_df, val_negs_df)
-    ndcg_at_k_10 = float(val_rank_metrics.get("ndcg@10", 0.0))
+    if compute_val_metrics:
+        val_rank_metrics = _ranking_metrics_spark(val_events_df, val_negs_df)
+        ndcg_at_k_10 = float(val_rank_metrics.get("ndcg@10", 0.0))
+    else:
+        val_rank_metrics = None
+        ndcg_at_k_10 = None
 
     # Test metrics
-    test_pos_df = test_df[["user_index", "movie_index"]].copy()
-    test_rank_metrics = _ranking_metrics_spark(test_pos_df, test_negs_df)
+    test_rank_metrics = _ranking_metrics_spark(test_events_df, test_negs_df)
 
     return {
         "rank": rank,
         "reg_param": reg_param,
         "max_iter": max_iter,
         "bias_lambda": bias_lambda,
-        "val_rating": {"rmse": rmse_val, "mae": mae_val},
+        "val_rating": None if rmse_val is None else {"rmse": rmse_val, "mae": mae_val},
         "test_rating": {"rmse": rmse_test, "mae": mae_test},
         "val_ranking": val_rank_metrics,
         "test_ranking": test_rank_metrics,
@@ -531,7 +540,31 @@ def main() -> None:
     parser.add_argument("--als-regs", type=str, default="0.1,1.0")
     parser.add_argument("--als-max-iter", type=int, default=10)
     parser.add_argument("--als-bias-lambda", type=float, default=25.0)
+    parser.add_argument(
+        "--als-user-blocks",
+        type=int,
+        default=None,
+        help="ALS user block count. Default: 10 for 1m, 40 for 10m.",
+    )
+    parser.add_argument(
+        "--als-item-blocks",
+        type=int,
+        default=None,
+        help="ALS item block count. Default: 10 for 1m, 40 for 10m.",
+    )
+    parser.add_argument("--spark-master", type=str, default="local[4]")
+    parser.add_argument("--spark-driver-memory", type=str, default="4g")
+    parser.add_argument("--spark-executor-memory", type=str, default="4g")
+    parser.add_argument("--spark-default-parallelism", type=int, default=4)
+    parser.add_argument("--spark-shuffle-partitions", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num-negatives", type=int, default=99)
+    parser.add_argument(
+        "--max-ranking-events",
+        type=int,
+        default=None,
+        help="Maximum held-out events to evaluate for ranking. Default: 20000 for both 1m and 10m.",
+    )
     parser.add_argument(
         "--stages",
         type=str,
@@ -564,9 +597,12 @@ def main() -> None:
     # Spark session
     from pyspark.sql import SparkSession
     spark = (
-        SparkSession.builder.master("local[*]")
+        SparkSession.builder.master(args.spark_master)
         .appName("collab_filtering_step3")
-        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.driver.memory", args.spark_driver_memory)
+        .config("spark.executor.memory", args.spark_executor_memory)
+        .config("spark.default.parallelism", str(args.spark_default_parallelism))
+        .config("spark.sql.shuffle.partitions", str(args.spark_shuffle_partitions))
         .getOrCreate()
     )
 
@@ -574,6 +610,8 @@ def main() -> None:
 
     targets = ["1m", "10m"] if args.dataset == "both" else [args.dataset]
     for key in targets:
+        als_user_blocks = args.als_user_blocks if args.als_user_blocks is not None else (10 if key == "1m" else 40)
+        als_item_blocks = args.als_item_blocks if args.als_item_blocks is not None else (10 if key == "1m" else 40)
         processed_dir = PROCESSED_DIR / key
         meta = json.load(open(processed_dir / "meta.json", "r"))
         num_users = int(meta["num_users"])
@@ -599,25 +637,38 @@ def main() -> None:
                 json.dump(progress, f, indent=2)
 
         print(f"[prep] {key}: loading Step-1 artifacts...")
-        train_df = _read_csv_gz(
+        train_df = read_csv_gz(
             processed_dir / "train.csv.gz",
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
-        val_df = _read_csv_gz(
+        val_df = read_csv_gz(
             processed_dir / "val.csv.gz",
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
-        test_df = _read_csv_gz(
+        test_df = read_csv_gz(
             processed_dir / "test.csv.gz",
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
-        val_negs_df = _read_csv_gz(
-            processed_dir / "val_negs.csv.gz",
-            dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
+        ratings_clean_df = read_csv_gz(
+            processed_dir / "ratings_clean.csv.gz",
+            dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
-        test_negs_df = _read_csv_gz(
-            processed_dir / "test_negs.csv.gz",
-            dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
+        max_ranking_events = default_max_ranking_events(key) if args.max_ranking_events is None else args.max_ranking_events
+        val_events_df, val_negs_df, val_eval_summary = build_candidate_groups(
+            split_df=val_df,
+            rated_source_df=ratings_clean_df,
+            num_movies=num_items,
+            num_negatives=args.num_negatives,
+            seed=args.seed + 300,
+            max_events=max_ranking_events,
+        )
+        test_events_df, test_negs_df, test_eval_summary = build_candidate_groups(
+            split_df=test_df,
+            rated_source_df=ratings_clean_df,
+            num_movies=num_items,
+            num_negatives=args.num_negatives,
+            seed=args.seed + 400,
+            max_events=max_ranking_events,
         )
 
         def should_run(stage: str) -> bool:
@@ -635,7 +686,6 @@ def main() -> None:
                 neighbors, sims = train_item_item_knn(train_df, num_users, num_items, neighbor_k=neigh_k)
                 knn_val_metrics = evaluate_knn_ranking_for_test_negs(
                     test_negs_df=val_negs_df,
-                    test_df=val_df,
                     neighbors=neighbors,
                     sims=sims,
                     train_df_for_user_history=train_df,
@@ -660,7 +710,6 @@ def main() -> None:
             )
             knn_test_metrics = evaluate_knn_ranking_for_test_negs(
                 test_negs_df=test_negs_df,
-                test_df=test_df,
                 neighbors=neighbors_final,
                 sims=sims_final,
                 train_df_for_user_history=trainval_df,
@@ -694,9 +743,10 @@ def main() -> None:
 
             progress["knn_results"] = {
                 "neighbor_k": int(knn_best["neigh_k"]),
-                "val_ranking": knn_best["val_metrics"],
+                "tuning_val_ranking": knn_best["val_metrics"],
                 "test_ranking": knn_test_metrics,
                 "test_rating": {"rmse": rmse_knn, "mae": mae_knn},
+                "ranking_eval": {"val": val_eval_summary, "test": test_eval_summary},
             }
             progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["knn_final"]))
             save_progress()
@@ -711,21 +761,31 @@ def main() -> None:
                         train_df=train_df,
                         val_df=val_df,
                         test_df=test_df,
-                        val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-                        test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                        val_events_df=val_events_df[["event_id", "user_index", "pos_movie_index"]],
+                        val_negs_df=val_negs_df[["event_id", "user_index", "pos_movie_index", "neg_movie_index"]],
+                        test_events_df=test_events_df[["event_id", "user_index", "pos_movie_index"]],
+                        test_negs_df=test_negs_df[["event_id", "user_index", "pos_movie_index", "neg_movie_index"]],
                         num_users=num_users,
                         num_items=num_items,
                         rank=rank,
                         reg_param=reg,
                         max_iter=args.als_max_iter,
                         bias_lambda=args.als_bias_lambda,
+                        num_user_blocks=als_user_blocks,
+                        num_item_blocks=als_item_blocks,
                         seed=args.seed,
                         ks=ks,
                     )
                     ndcg10 = float(out.get("val_ndcg@10", 0.0))
                     print(f"[als] {key}: rank={rank} reg={reg} val_ndcg@10={ndcg10:.6f}")
                     if als_best is None or ndcg10 > als_best["val_ndcg10"]:
-                        als_best = {"rank": rank, "reg": reg, "val_ndcg10": ndcg10}
+                        als_best = {
+                            "rank": rank,
+                            "reg": reg,
+                            "val_ndcg10": ndcg10,
+                            "val_ranking": out["val_ranking"],
+                            "val_rating": out["val_rating"],
+                        }
             progress["als_best"] = als_best
             progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["als_tune"]))
             save_progress()
@@ -742,24 +802,31 @@ def main() -> None:
                 train_df=trainval_df,
                 val_df=val_df,
                 test_df=test_df,
-                val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-                test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                val_events_df=val_events_df[["event_id", "user_index", "pos_movie_index"]],
+                val_negs_df=val_negs_df[["event_id", "user_index", "pos_movie_index", "neg_movie_index"]],
+                test_events_df=test_events_df[["event_id", "user_index", "pos_movie_index"]],
+                test_negs_df=test_negs_df[["event_id", "user_index", "pos_movie_index", "neg_movie_index"]],
                 num_users=num_users,
                 num_items=num_items,
                 rank=int(als_best["rank"]),
                 reg_param=float(als_best["reg"]),
                 max_iter=args.als_max_iter,
                 bias_lambda=args.als_bias_lambda,
+                num_user_blocks=als_user_blocks,
+                num_item_blocks=als_item_blocks,
                 seed=args.seed,
                 ks=ks,
                 export_artifacts_dir=export_dir,
+                compute_val_metrics=False,
             )
             progress["als_results"] = {
                 "best_rank": int(als_best["rank"]),
                 "best_reg_param": float(als_best["reg"]),
-                "val_ranking": final_out["val_ranking"],
+                "tuning_val_ranking": als_best.get("val_ranking"),
+                "tuning_val_rating": als_best.get("val_rating"),
                 "test_ranking": final_out["test_ranking"],
                 "test_rating": final_out["test_rating"],
+                "ranking_eval": {"val": val_eval_summary, "test": test_eval_summary},
             }
             progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["als_final"]))
             save_progress()
@@ -780,4 +847,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

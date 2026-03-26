@@ -9,6 +9,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+try:
+    from scripts.ranking_eval import build_candidate_groups, default_max_ranking_events, read_csv_gz
+except ModuleNotFoundError:
+    from ranking_eval import build_candidate_groups, default_max_ranking_events, read_csv_gz
+
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
@@ -16,27 +21,22 @@ PROCESSED_DIR = DATA_DIR / "processed"
 RESULTS_DIR = DATA_DIR / "results" / "neumf"
 
 
-def _read_csv_gz(path: pathlib.Path, dtypes=None) -> pd.DataFrame:
-    return pd.read_csv(path, compression="gzip", dtype=dtypes)
-
-
-def _group_users_onepos(test_negs_df: pd.DataFrame):
+def _group_candidate_events(test_negs_df: pd.DataFrame):
     """
     test_negs_df schema:
       user_index, pos_movie_index, neg_movie_index
 
     Returns:
-      dict[user_index] -> (pos_movie_index, neg_movie_indices_array)
+      list[(user_index, pos_movie_index, neg_movie_indices_array)]
     """
-    # Ensure stable grouping.
-    df = test_negs_df.sort_values(["user_index"], kind="stable")
-    grouped = df.groupby("user_index", sort=False)
-    out = {}
-    for u, g in grouped:
-        u = int(u)
+    df = test_negs_df.sort_values(["event_id", "neg_movie_index"], kind="stable")
+    grouped = df.groupby("event_id", sort=False)
+    out = []
+    for event_id, g in grouped:
+        u = int(g["user_index"].iloc[0])
         pos_movie = int(g["pos_movie_index"].iloc[0])
         negs = g["neg_movie_index"].to_numpy(dtype=np.int32, copy=False)
-        out[u] = (pos_movie, negs)
+        out.append((u, pos_movie, negs))
     return out
 
 
@@ -53,26 +53,23 @@ def evaluate_topn_ndcg_onepos(
     For each user u:
       candidate set = [pos] + negs (from test_negs_df)
       compute logits for all candidates
-      compute Precision@K, Recall@K, NDCG@K (one-positive-per-user)
+      compute Precision@K, Recall@K, NDCG@K (one-positive-per-event)
     """
     model.eval()
-    groups = _group_users_onepos(test_negs_df)
-    user_ids = list(groups.keys())
+    groups = _group_candidate_events(test_negs_df)
 
     prec_sum = {k: 0.0 for k in ks}
     rec_sum = {k: 0.0 for k in ks}
     ndcg_sum = {k: 0.0 for k in ks}
 
-    # Evaluate in batches by user groups.
-    for start in range(0, len(user_ids), batch_users):
-        batch_u = user_ids[start : start + batch_users]
-        # Flatten candidate pairs for the batch of users.
+    # Evaluate in batches by held-out events.
+    for start in range(0, len(groups), batch_users):
+        batch_groups = groups[start : start + batch_users]
         user_rep = []
         item_rep = []
         pos_items = []
         group_sizes = []
-        for u in batch_u:
-            pos_movie, negs = groups[u]
+        for u, pos_movie, negs in batch_groups:
             # Candidate set includes the positive once + negatives.
             # Remove any accidental duplicates of pos among negatives.
             if negs.size > 0:
@@ -94,7 +91,7 @@ def evaluate_topn_ndcg_onepos(
 
         # Compute rank_pos for each user separately.
         offset = 0
-        for idx_u, u in enumerate(batch_u):
+        for idx_u, (_u, _pos_movie, _negs) in enumerate(batch_groups):
             pos_movie = int(pos_items[idx_u])
             size = int(group_sizes[idx_u])
             cand_items = item_rep[offset : offset + size].astype(np.int32, copy=False)
@@ -112,7 +109,7 @@ def evaluate_topn_ndcg_onepos(
                     rec_sum[k] += 1.0
                     ndcg_sum[k] += 1.0 / float(np.log2(rank_pos + 1.0))
 
-    num_users = float(len(user_ids))
+    num_users = float(len(groups))
     return {
         **{f"precision@{k}": prec_sum[k] / num_users for k in ks},
         **{f"recall@{k}": rec_sum[k] / num_users for k in ks},
@@ -229,6 +226,12 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ks", type=str, default="5,10,20")
+    parser.add_argument(
+        "--max-ranking-events",
+        type=int,
+        default=None,
+        help="Maximum held-out events to evaluate for ranking. Default: 20000 for both 1m and 10m.",
+    )
     args = parser.parse_args()
 
     if args.dataset != "1m":
@@ -248,17 +251,38 @@ def main() -> None:
     num_users = int(meta["num_users"])
     num_items = int(meta["num_movies"])
 
-    train_df = _read_csv_gz(
+    train_df = read_csv_gz(
         processed_dir / "train.csv.gz",
         dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
     )
-    val_negs_df = _read_csv_gz(
-        processed_dir / "val_negs.csv.gz",
-        dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
+    val_df = read_csv_gz(
+        processed_dir / "val.csv.gz",
+        dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
     )
-    test_negs_df = _read_csv_gz(
-        processed_dir / "test_negs.csv.gz",
-        dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
+    test_df = read_csv_gz(
+        processed_dir / "test.csv.gz",
+        dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
+    )
+    ratings_clean_df = read_csv_gz(
+        processed_dir / "ratings_clean.csv.gz",
+        dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
+    )
+    max_ranking_events = default_max_ranking_events(args.dataset) if args.max_ranking_events is None else args.max_ranking_events
+    _val_events_df, val_negs_df, val_eval_summary = build_candidate_groups(
+        split_df=val_df,
+        rated_source_df=ratings_clean_df,
+        num_movies=num_items,
+        num_negatives=99,
+        seed=args.seed + 500,
+        max_events=max_ranking_events,
+    )
+    _test_events_df, test_negs_df, test_eval_summary = build_candidate_groups(
+        split_df=test_df,
+        rated_source_df=ratings_clean_df,
+        num_movies=num_items,
+        num_negatives=99,
+        seed=args.seed + 600,
+        max_events=max_ranking_events,
     )
     print(f"[prep] dataset={args.dataset} users={num_users} items={num_items} train_rows={len(train_df)}")
 
@@ -382,6 +406,7 @@ def main() -> None:
         "best_epoch_val_ndcg@10": best["epoch"],
         "val_metrics": best["val_metrics"],
         "test_metrics": test_metrics,
+        "ranking_eval": {"val": val_eval_summary, "test": test_eval_summary},
     }
 
     with open(out_dir / "results.json", "w") as f:
@@ -393,4 +418,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

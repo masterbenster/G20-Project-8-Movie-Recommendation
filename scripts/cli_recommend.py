@@ -14,6 +14,24 @@ PROCESSED_DIR = DATA_DIR / "processed"
 RAW_DIR = DATA_DIR / "raw"
 MODELS_DIR = DATA_DIR / "models" / "als"
 
+
+def _read_movielens_dat(path: pathlib.Path, *, names: list[str], dtypes: dict[str, object]) -> pd.DataFrame:
+    last_error = None
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            return pd.read_csv(
+                path,
+                sep="::",
+                engine="python",
+                header=None,
+                names=names,
+                dtype=dtypes,
+                encoding=encoding,
+            )
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    raise last_error if last_error is not None else RuntimeError(f"Unable to read MovieLens data file: {path}")
+
 def _parse_movie_ratings(pairs: str) -> list[tuple[int, float]]:
     """
     Parse comma-separated "movieId:rating" pairs.
@@ -113,14 +131,10 @@ def _load_movie_titles(dataset_key: str, processed_dir: pathlib.Path) -> tuple[l
     if not movies_path.exists():
         raise FileNotFoundError(f"Missing MovieLens movies metadata: {movies_path}")
 
-    movies_df = pd.read_csv(
+    movies_df = _read_movielens_dat(
         movies_path,
-        sep="::",
-        engine="python",
-        header=None,
         names=["movieId_raw", "title", "genres"],
-        dtype={"movieId_raw": np.int32, "title": str, "genres": str},
-        encoding="latin-1",
+        dtypes={"movieId_raw": np.int32, "title": str, "genres": str},
     )
     movie_map = _load_movie_index_map(processed_dir)
     movies_df = movies_df.merge(movie_map, on="movieId_raw", how="inner")
@@ -136,12 +150,18 @@ def _load_movie_titles(dataset_key: str, processed_dir: pathlib.Path) -> tuple[l
     return titles, genres
 
 
-def _load_rated_movies_for_user(train_csv_gz: pathlib.Path, user_index: int, chunksize: int = 200000) -> set[int]:
+def _load_rated_movies_for_user(history_csv_gz: pathlib.Path, user_index: int, chunksize: int = 200000) -> set[int]:
     rated: set[int] = set()
-    # Stream through train.csv.gz and collect movie_index rows for this user_index.
+    # Stream through a processed history file and collect movie_index rows for this user_index.
     # This avoids loading the full dataset into RAM.
     dtypes = {"user_index": np.int32, "movie_index": np.int32}
-    for chunk in pd.read_csv(train_csv_gz, compression="gzip", usecols=["user_index", "movie_index"], dtype=dtypes, chunksize=chunksize):
+    for chunk in pd.read_csv(
+        history_csv_gz,
+        compression="gzip",
+        usecols=["user_index", "movie_index"],
+        dtype=dtypes,
+        chunksize=chunksize,
+    ):
         sub = chunk[chunk["user_index"] == user_index]
         if len(sub) > 0:
             rated.update(sub["movie_index"].astype(int).tolist())
@@ -163,7 +183,25 @@ def main() -> None:
         ),
     )
     parser.add_argument("--top-k", type=int, default=10)
-    parser.add_argument("--exclude-rated", action="store_true", default=True, help="Exclude items in training history for the user.")
+    parser.add_argument(
+        "--exclude-rated",
+        dest="exclude_rated",
+        action="store_true",
+        default=True,
+        help="Exclude seen items for the user. Enabled by default.",
+    )
+    parser.add_argument(
+        "--include-seen",
+        dest="exclude_rated",
+        action="store_false",
+        help="Allow recommendations that include seen items.",
+    )
+    parser.add_argument(
+        "--exclude-seen-scope",
+        choices=["train", "all"],
+        default="all",
+        help="Which processed history to exclude for existing users when seen items are filtered.",
+    )
     parser.add_argument(
         "--cold-start-reg",
         type=float,
@@ -291,10 +329,10 @@ def main() -> None:
         residual_scores = user_factors[user_index].astype(np.float32) @ item_factors.T.astype(np.float32)  # (num_items,)
         pred = mu + float(b_u[user_index]) + b_i.astype(np.float32) + residual_scores
 
-        # Exclude items the user already rated in training.
+        # Exclude items the user already rated.
         if args.exclude_rated:
-            train_csv_gz = processed_dir / "train.csv.gz"
-            rated = _load_rated_movies_for_user(train_csv_gz, user_index)
+            history_name = "train.csv.gz" if args.exclude_seen_scope == "train" else "ratings_clean.csv.gz"
+            rated = _load_rated_movies_for_user(processed_dir / history_name, user_index)
             if rated:
                 pred[list(rated)] = -np.inf
 
@@ -320,4 +358,3 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         sys.exit(130)
-

@@ -77,27 +77,40 @@ def _dedup_latest_by_user_movie(ratings: pd.DataFrame) -> pd.DataFrame:
 
 
 def _time_aware_split(ratings: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    # For each user:
-    # - last rating -> test
-    # - second last rating -> validation
-    # - remaining -> train
-    # Users with < 3 interactions are removed.
-    counts = ratings.groupby("userId")["userId"].transform("size")
+    # Time-ordered per-user 80/10/10 split.
+    # We keep the oldest ratings in train, the next block in validation,
+    # and the most recent ratings in test.
+    counts = ratings.groupby("userId")["userId"].transform("size").astype(np.int32)
     ratings = ratings[counts >= 3].copy()
-    ratings = ratings.sort_values(["userId", "timestamp"])
-    ratings["rank"] = ratings.groupby("userId").cumcount()
-    ratings["user_count"] = counts[counts >= 3]
-    test_mask = ratings["rank"] == (ratings["user_count"] - 1)
-    val_mask = ratings["rank"] == (ratings["user_count"] - 2)
+    ratings = ratings.sort_values(["userId", "timestamp", "movieId"]).copy()
 
-    train_df = ratings[~(test_mask | val_mask)].copy()
+    counts = ratings.groupby("userId")["userId"].transform("size").astype(np.int32)
+    count_arr = counts.to_numpy(dtype=np.int32, copy=False)
+    val_count = np.maximum(1, np.floor(count_arr * 0.1).astype(np.int32))
+    test_count = np.maximum(1, np.floor(count_arr * 0.1).astype(np.int32))
+    train_count = count_arr - val_count - test_count
+    if np.any(train_count < 1):
+        raise ValueError("Time-aware 80/10/10 split produced a user with empty train set.")
+
+    ratings["rank"] = ratings.groupby("userId").cumcount().astype(np.int32)
+    ratings["train_count"] = train_count
+    ratings["val_count"] = val_count
+
+    train_mask = ratings["rank"] < ratings["train_count"]
+    val_mask = (ratings["rank"] >= ratings["train_count"]) & (
+        ratings["rank"] < (ratings["train_count"] + ratings["val_count"])
+    )
+    test_mask = ~(train_mask | val_mask)
+
+    train_df = ratings[train_mask].copy()
     val_df = ratings[val_mask].copy()
     test_df = ratings[test_mask].copy()
 
     # Keep split-specific columns tidy.
-    train_df = train_df.drop(columns=["rank", "user_count"])
-    val_df = val_df.drop(columns=["rank", "user_count"])
-    test_df = test_df.drop(columns=["rank", "user_count"])
+    drop_cols = ["rank", "train_count", "val_count"]
+    train_df = train_df.drop(columns=drop_cols)
+    val_df = val_df.drop(columns=drop_cols)
+    test_df = test_df.drop(columns=drop_cols)
     return train_df, val_df, test_df
 
 
@@ -123,89 +136,68 @@ def _write_gz_csv(df: pd.DataFrame, out_path: pathlib.Path) -> None:
         df.to_csv(f, index=False)
 
 
-def _sample_negatives_for_split(
-    split_df: pd.DataFrame,
-    rated_by_user: dict[int, set[int]],
-    num_movies: int,
-    num_negatives: int,
-    seed: int,
-) -> pd.DataFrame:
-    rng = np.random.default_rng(seed)
-    all_movies = np.arange(num_movies, dtype=np.int32)
-
-    rows = []
-    # Each row in split_df corresponds to one (user_index, pos_movie_index).
-    for user_index, pos_movie_index in zip(split_df["user_index"].to_numpy(), split_df["movie_index"].to_numpy()):
-        rated_set = rated_by_user.get(int(user_index), set())
-        negs: set[int] = set()
-        # Rejection sampling with batched draws.
-        while len(negs) < num_negatives:
-            remaining = num_negatives - len(negs)
-            batch = rng.integers(0, num_movies, size=remaining * 3, dtype=np.int32)
-            for m in batch:
-                mi = int(m)
-                if mi in rated_set:
-                    continue
-                if mi == int(pos_movie_index):
-                    continue
-                negs.add(mi)
-                if len(negs) >= num_negatives:
-                    break
-
-        for neg_movie_index in negs:
-            rows.append((int(user_index), int(pos_movie_index), int(neg_movie_index)))
-
-    return pd.DataFrame(rows, columns=["user_index", "pos_movie_index", "neg_movie_index"])
-
-
 def prepare_dataset(spec: DatasetSpec, num_negatives: int, seed: int) -> None:
     # Backward-compatible wrapper: original behavior excluded all previously-seen items.
     prepare_dataset_with_negative_scope(spec, num_negatives=num_negatives, seed=seed, negative_scope="all")
 
 
-def _sample_negatives_with_scope(
+def _validate_split_outputs(
     *,
-    negative_scope: str,
     train_df: pd.DataFrame,
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
     ratings_clean_out: pd.DataFrame,
-    num_movies: int,
-    num_negatives: int,
-    seed: int,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # Negative sampling pool depends on scope:
-    # - "all": exclude any item the user interacted with anywhere (train+val+test)
-    # - "train_only": exclude only items the user interacted with in training
-    if negative_scope == "all":
-        rated_source_df = ratings_clean_out
-    elif negative_scope == "train_only":
-        rated_source_df = train_df
-    else:
-        raise ValueError(f"Unknown negative_scope: {negative_scope}")
+    val_negs_df: pd.DataFrame | None = None,
+    test_negs_df: pd.DataFrame | None = None,
+    num_negatives: int | None = None,
+) -> dict[str, int]:
+    ratings_pairs = ratings_clean_out[["user_index", "movie_index"]].drop_duplicates()
 
-    rated_by_user: dict[int, set[int]] = {}
-    for user_index, movie_index in zip(
-        rated_source_df["user_index"].to_numpy(), rated_source_df["movie_index"].to_numpy()
-    ):
-        u = int(user_index)
-        rated_by_user.setdefault(u, set()).add(int(movie_index))
+    def _overlap_count(left: pd.DataFrame, right: pd.DataFrame) -> int:
+        merged = left[["user_index", "movie_index"]].merge(
+            right[["user_index", "movie_index"]],
+            on=["user_index", "movie_index"],
+            how="inner",
+        )
+        return int(len(merged))
 
-    val_negs_df = _sample_negatives_for_split(
-        split_df=val_df,
-        rated_by_user=rated_by_user,
-        num_movies=num_movies,
-        num_negatives=num_negatives,
-        seed=seed + 1,
-    )
-    test_negs_df = _sample_negatives_for_split(
-        split_df=test_df,
-        rated_by_user=rated_by_user,
-        num_movies=num_movies,
-        num_negatives=num_negatives,
-        seed=seed + 2,
-    )
-    return val_negs_df, test_negs_df
+    def _negative_summary(label: str, negs_df: pd.DataFrame) -> dict[str, int]:
+        event_sizes = negs_df.groupby(["user_index", "pos_movie_index"]).size()
+        if event_sizes.empty:
+            raise ValueError(f"{label}: no ranking candidate groups were generated.")
+        if num_negatives is not None and not bool((event_sizes == int(num_negatives)).all()):
+            raise ValueError(f"{label}: expected {num_negatives} negatives per event, found inconsistent counts.")
+
+        seen_overlap = (
+            negs_df[["user_index", "neg_movie_index"]]
+            .rename(columns={"neg_movie_index": "movie_index"})
+            .merge(ratings_pairs, on=["user_index", "movie_index"], how="inner")
+        )
+        if len(seen_overlap) > 0:
+            raise ValueError(f"{label}: generated negatives overlap with known user history ({len(seen_overlap)} rows).")
+
+        return {
+            f"{label}_events": int(event_sizes.shape[0]),
+            f"{label}_neg_rows_min": int(event_sizes.min()),
+            f"{label}_neg_rows_max": int(event_sizes.max()),
+            f"{label}_seen_overlap_rows": int(len(seen_overlap)),
+        }
+
+    train_val_overlap = _overlap_count(train_df, val_df)
+    train_test_overlap = _overlap_count(train_df, test_df)
+    val_test_overlap = _overlap_count(val_df, test_df)
+    if train_val_overlap or train_test_overlap or val_test_overlap:
+        raise ValueError("Train/val/test splits overlap.")
+
+    summary = {
+        "train_val_overlap_rows": train_val_overlap,
+        "train_test_overlap_rows": train_test_overlap,
+        "val_test_overlap_rows": val_test_overlap,
+    }
+    if val_negs_df is not None and test_negs_df is not None:
+        summary.update(_negative_summary("val", val_negs_df))
+        summary.update(_negative_summary("test", test_negs_df))
+    return summary
 
 
 def prepare_dataset_with_negative_scope(
@@ -254,103 +246,58 @@ def prepare_dataset_with_negative_scope(
 
     ratings_clean_out = ratings_clean_indexed[["user_index", "movie_index", "rating", "timestamp"]].copy()
 
-    val_negs_df, test_negs_df = _sample_negatives_with_scope(
-        negative_scope=negative_scope,
-        train_df=train_df,
-        val_df=val_df,
-        test_df=test_df,
-        ratings_clean_out=ratings_clean_out,
-        num_movies=num_movies,
-        num_negatives=num_negatives,
-        seed=seed,
-    )
-
     # Write artifacts.
     _write_gz_csv(ratings_clean_out, out_dir / "ratings_clean.csv.gz")
     _write_gz_csv(train_df, out_dir / "train.csv.gz")
     _write_gz_csv(val_df, out_dir / "val.csv.gz")
     _write_gz_csv(test_df, out_dir / "test.csv.gz")
-    _write_gz_csv(val_negs_df, out_dir / "val_negs.csv.gz")
-    _write_gz_csv(test_negs_df, out_dir / "test_negs.csv.gz")
+    for stale_name in ("val_negs.csv.gz", "test_negs.csv.gz"):
+        stale_path = out_dir / stale_name
+        if stale_path.exists():
+            stale_path.unlink()
     user_map.to_csv(out_dir / "user_map.csv", index=False)
     movie_map.to_csv(out_dir / "movie_map.csv", index=False)
+
+    validation_summary = _validate_split_outputs(
+        train_df=train_df,
+        val_df=val_df,
+        test_df=test_df,
+        ratings_clean_out=ratings_clean_out,
+    )
 
     meta = {
         "dataset": spec.key,
         "seed": seed,
         "num_negatives": num_negatives,
+        "negative_scope": negative_scope,
         "num_users": num_users,
         "num_movies": num_movies,
         "num_ratings_clean": int(len(ratings_clean_out)),
         "num_train": int(len(train_df)),
         "num_val": int(len(val_df)),
         "num_test": int(len(test_df)),
-        "num_val_negs_rows": int(len(val_negs_df)),
-        "num_test_negs_rows": int(len(test_negs_df)),
+        "num_val_events": int(len(val_df)),
+        "num_test_events": int(len(test_df)),
+        "ranking_eval": {
+            "negative_scope": negative_scope,
+            "num_negatives": int(num_negatives),
+            "materialized_candidate_files": False,
+            "default_max_events": {"1m": 20000, "10m": 20000},
+        },
+        "split_policy": {
+            "type": "time_aware_user_ratio",
+            "train_ratio": 0.8,
+            "val_ratio": 0.1,
+            "test_ratio": 0.1,
+            "min_user_ratings": 3,
+            "ordering": "oldest_to_newest",
+        },
+        "validation": validation_summary,
         "note": (
-            "Time split: per-user last->test, second-last->val, rest->train after dedup by latest (userId,movieId). "
-            f"Negative scope: {negative_scope}."
+            "Time-aware per-user 80/10/10 split after dedup by latest (userId,movieId). "
+            "Ranking negatives are generated on the fly during evaluation."
         ),
     }
-    with open(out_dir / "meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
-
-
-def regenerate_negatives_only(
-    spec: DatasetSpec,
-    *,
-    num_negatives: int,
-    seed: int,
-    negative_scope: str,
-) -> None:
-    out_dir = PROCESSED_DIR / spec.key
-    meta = json.load(open(out_dir / "meta.json", "r"))
-    num_users = int(meta["num_users"])
-    num_movies = int(meta["num_movies"])
-
-    processed_dir = PROCESSED_DIR / spec.key
-    dtypes_train = {"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64}
-    train_df = pd.read_csv(processed_dir / "train.csv.gz", compression="gzip", dtype=dtypes_train)
-    val_df = pd.read_csv(processed_dir / "val.csv.gz", compression="gzip", dtype=dtypes_train)[
-        ["user_index", "movie_index", "rating", "timestamp"]
-    ]
-    test_df = pd.read_csv(processed_dir / "test.csv.gz", compression="gzip", dtype=dtypes_train)[
-        ["user_index", "movie_index", "rating", "timestamp"]
-    ]
-
-    if negative_scope == "all":
-        # Need full interaction history to exclude seen items.
-        dtypes_all = {"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64}
-        ratings_clean_out = pd.read_csv(
-            processed_dir / "ratings_clean.csv.gz", compression="gzip", dtype=dtypes_all
-        )[
-            ["user_index", "movie_index", "rating", "timestamp"]
-        ]
-    elif negative_scope == "train_only":
-        ratings_clean_out = None
-    else:
-        raise ValueError(f"Unknown negative_scope: {negative_scope}")
-
-    # Create negatives.
-    val_negs_df, test_negs_df = _sample_negatives_with_scope(
-        negative_scope=negative_scope,
-        train_df=train_df,
-        val_df=val_df,
-        test_df=test_df,
-        ratings_clean_out=ratings_clean_out if ratings_clean_out is not None else train_df,
-        num_movies=num_movies,
-        num_negatives=num_negatives,
-        seed=seed,
-    )
-
-    _write_gz_csv(val_negs_df, out_dir / "val_negs.csv.gz")
-    _write_gz_csv(test_negs_df, out_dir / "test_negs.csv.gz")
-
-    # Update meta with new scope and row counts.
-    meta["num_negatives"] = num_negatives
-    meta["num_val_negs_rows"] = int(len(val_negs_df))
-    meta["num_test_negs_rows"] = int(len(test_negs_df))
-    meta["note"] = meta.get("note", "") + f" (negative_scope={negative_scope}, regenerated=True)"
     with open(out_dir / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
@@ -364,12 +311,7 @@ def main() -> None:
         "--negative-scope",
         choices=["all", "train_only"],
         default="all",
-        help="What to exclude when sampling negatives: all user interactions vs train-only history.",
-    )
-    parser.add_argument(
-        "--regenerate-negatives",
-        action="store_true",
-        help="If processed data exists, only regenerate val/test negatives with the new scope.",
+        help="Recorded ranking-eval policy. Candidate negatives are generated on the fly during evaluation.",
     )
     parser.add_argument("--skip-existing", action="store_true", help="Skip if meta.json exists for dataset.")
     args = parser.parse_args()
@@ -396,22 +338,11 @@ def main() -> None:
         spec = zips[key]
         out_dir = PROCESSED_DIR / spec.key
         meta_path = out_dir / "meta.json"
-        if args.regenerate_negatives and meta_path.exists():
-            print(f"[regen] {spec.key}: regenerating negatives only (scope={args.negative_scope})...")
-            regenerate_negatives_only(
-                spec,
-                num_negatives=args.num_negatives,
-                seed=args.seed,
-                negative_scope=args.negative_scope,
-            )
-            print(f"[done] {spec.key}: negatives updated in {out_dir}")
-            continue
-
         if args.skip_existing and meta_path.exists():
             print(f"[skip] {spec.key}: {meta_path} already exists")
             continue
 
-        print(f"[prep] {spec.key}: reading raw ratings and building splits/negatives...")
+        print(f"[prep] {spec.key}: reading raw ratings and building corrected splits...")
         prepare_dataset_with_negative_scope(
             spec,
             num_negatives=args.num_negatives,
@@ -423,4 +354,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
