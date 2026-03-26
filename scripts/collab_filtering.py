@@ -401,83 +401,70 @@ def train_and_evaluate_spark_als_residual_biases(
     test_pred = test_pred.merge(test_df[["user_index", "movie_index", "rating"]], on=["user_index", "movie_index"], how="inner")
     rmse_test, mae_test = _rmse_mae(test_pred["rating"].to_numpy(dtype=np.float32), test_pred["rating_pred"].to_numpy(dtype=np.float32))
 
-    # Ranking evaluation on val_negs and test_negs using candidate sets:
-    def _build_candidates_and_score(negs_df: pd.DataFrame, pos_df: pd.DataFrame) -> tuple[pd.DataFrame, float]:
-        # negs_df columns: user_index, neg_movie_index
-        negs_pairs = negs_df[["user_index", "neg_movie_index"]].copy().rename(columns={"neg_movie_index": "movie_index"})
-        pos_pairs = pos_df[["user_index", "movie_index"]].copy()
-        pos_pairs = pos_pairs.rename(columns={"movie_index": "movie_index"})
+    # Ranking evaluation on val_negs and test_negs using candidate sets.
+    # IMPORTANT: Do this fully in Spark to avoid driver OOM from collecting millions of predictions.
+    from pyspark.sql.window import Window
 
-        # Create combined pairs for scoring.
-        cand_pairs = pd.concat(
-            [
-                pos_pairs.assign(is_pos=1),
-                negs_pairs.assign(is_pos=0),
-            ],
-            ignore_index=True,
-        )
-        pred = _predict_pairs(cand_pairs[["user_index", "movie_index"]], "cand_pred")
-        pred = pred.merge(cand_pairs[["user_index", "movie_index", "is_pos"]], on=["user_index", "movie_index"], how="inner")
-        return pred
+    def _ranking_metrics_spark(pos_df_pd: pd.DataFrame, negs_df_pd: pd.DataFrame) -> dict[str, float]:
+        """
+        One-positive-per-user candidate construction:
+          cand = {pos(u)} U {negs(u)} with is_pos flag.
+        Metrics are computed as mean over users of:
+          precision@k = (1/k) * I(rank_pos<=k)
+          recall@k    = I(rank_pos<=k)
+          ndcg@k      = I(rank_pos<=k) / log2(rank_pos+1)
+        """
+        pos_sdf = spark.createDataFrame(pos_df_pd[["user_index", "movie_index"]].copy())
+        pos_sdf = pos_sdf.withColumn("is_pos", F.lit(1))
 
-    # Val candidates
-    val_pos_df = val_df[["user_index", "movie_index"]].copy().rename(columns={"movie_index": "movie_index"})
-    val_negs_pairs = val_negs_df.copy()
-    val_pred = _build_candidates_and_score(val_negs_pairs.rename(columns={"neg_movie_index": "neg_movie_index"}), val_pos_df)
-    # Compute NDCG@K with a numpy-based "one positive per user" construction.
-    # We need exactly one positive candidate per user in the candidate set.
-    # For each user, we create arrays for all scored items (pos + negs).
-    # Get pos_movie_index per user from val_pos_df.
-    pos_per_user = val_pos_df.set_index("user_index")["movie_index"].to_dict()
+        neg_tmp = negs_df_pd[["user_index", "neg_movie_index"]].copy().rename(columns={"neg_movie_index": "movie_index"})
+        neg_sdf = spark.createDataFrame(neg_tmp[["user_index", "movie_index"]].copy())
+        neg_sdf = neg_sdf.withColumn("is_pos", F.lit(0))
 
-    user_list = []
-    pos_movie_list = []
-    movie_list = []
-    score_list = []
-    for u0, grp in val_pred.groupby("user_index"):
-        u0 = int(u0)
-        pos_movie = int(pos_per_user[u0])
-        cand_movies = grp["movie_index"].to_numpy(dtype=np.int32, copy=False)
-        cand_scores = grp["rating_pred"].to_numpy(dtype=np.float32, copy=False)
-        # Ensure pos included once
-        user_list.extend([u0] * len(cand_movies))
-        pos_movie_list.extend([pos_movie] * len(cand_movies))
-        movie_list.extend(cand_movies.tolist())
-        score_list.extend(cand_scores.tolist())
+        cand_sdf = pos_sdf.unionByName(neg_sdf)
 
-    val_rank_metrics = _metrics_from_scores_onepos(
-        user_indices=np.asarray(user_list, dtype=np.int32),
-        pos_movie_indices=np.asarray(pos_movie_list, dtype=np.int32),
-        movie_indices_for_scores=np.asarray(movie_list, dtype=np.int32),
-        scores_for_scores=np.asarray(score_list, dtype=np.float32),
-        ks=ks,
-    )
+        # Predict residuals then add biases back to get rating_pred.
+        pairs_sdf = cand_sdf.select("user_index", "movie_index")
+        pred = als_model.transform(pairs_sdf).select("user_index", "movie_index", "prediction")
+        pred = pred.join(bu_sdf, on="user_index", how="left").join(bi_sdf, on="movie_index", how="left")
+        residual_pred = F.when(F.isnan(pred["prediction"]), F.lit(0.0)).otherwise(pred["prediction"])
+        pred = pred.withColumn("rating_pred", residual_pred + float(mu) + pred["b_u"] + pred["b_i"])
+
+        cand_pred = pred.join(cand_sdf.select("user_index", "movie_index", "is_pos"), on=["user_index", "movie_index"], how="inner")
+
+        w = Window.partitionBy("user_index").orderBy(F.col("rating_pred").desc(), F.col("movie_index").desc())
+        ranked = cand_pred.withColumn("rn", F.row_number().over(w))
+
+        pos_ranks = ranked.filter(F.col("is_pos") == 1).select("user_index", "rn")
+
+        # Precompute log2 base (Spark doesn't guarantee log2 across all versions).
+        log2_denom = F.log(F.col("rn").cast("double") + F.lit(1.0)) / F.log(F.lit(2.0))
+        ndcg_term = F.when(F.col("rn") <= F.lit(9999999), F.lit(1.0) / log2_denom).otherwise(F.lit(0.0))
+
+        agg_exprs = []
+        for k in ks:
+            within = F.col("rn") <= F.lit(int(k))
+            # precision@k = (1/k) when within else 0
+            agg_exprs.append(F.avg(F.when(within, F.lit(1.0 / float(k))).otherwise(F.lit(0.0))).alias(f"precision@{k}"))
+            # recall@k = 1 when within else 0
+            agg_exprs.append(F.avg(F.when(within, F.lit(1.0)).otherwise(F.lit(0.0))).alias(f"recall@{k}"))
+            # ndcg@k = 1/log2(rn+1) when within else 0
+            agg_exprs.append(
+                F.avg(F.when(within, F.lit(1.0) / log2_denom).otherwise(F.lit(0.0))).alias(f"ndcg@{k}")
+            )
+
+        row = pos_ranks.agg(*agg_exprs).collect()[0].asDict()
+        # Ensure native floats
+        return {k: float(v) for k, v in row.items()}
+
+    # Val metrics
+    val_pos_df = val_df[["user_index", "movie_index"]].copy()
+    val_rank_metrics = _ranking_metrics_spark(val_pos_df, val_negs_df)
     ndcg_at_k_10 = float(val_rank_metrics.get("ndcg@10", 0.0))
 
-    # Test candidates
-    test_pos_df = test_df[["user_index", "movie_index"]].copy().rename(columns={"movie_index": "movie_index"})
-    test_pred_pairs_df = _build_candidates_and_score(test_negs_df.rename(columns={"neg_movie_index": "neg_movie_index"}), test_pos_df)
-    pos_per_user_test = test_pos_df.set_index("user_index")["movie_index"].to_dict()
-    user_list = []
-    pos_movie_list = []
-    movie_list = []
-    score_list = []
-    for u0, grp in test_pred_pairs_df.groupby("user_index"):
-        u0 = int(u0)
-        pos_movie = int(pos_per_user_test[u0])
-        cand_movies = grp["movie_index"].to_numpy(dtype=np.int32, copy=False)
-        cand_scores = grp["rating_pred"].to_numpy(dtype=np.float32, copy=False)
-        user_list.extend([u0] * len(cand_movies))
-        pos_movie_list.extend([pos_movie] * len(cand_movies))
-        movie_list.extend(cand_movies.tolist())
-        score_list.extend(cand_scores.tolist())
-    test_rank_metrics = _metrics_from_scores_onepos(
-        user_indices=np.asarray(user_list, dtype=np.int32),
-        pos_movie_indices=np.asarray(pos_movie_list, dtype=np.int32),
-        movie_indices_for_scores=np.asarray(movie_list, dtype=np.int32),
-        scores_for_scores=np.asarray(score_list, dtype=np.float32),
-        ks=ks,
-    )
+    # Test metrics
+    test_pos_df = test_df[["user_index", "movie_index"]].copy()
+    test_rank_metrics = _ranking_metrics_spark(test_pos_df, test_negs_df)
 
     return {
         "rank": rank,
@@ -507,6 +494,17 @@ def main() -> None:
     parser.add_argument("--als-max-iter", type=int, default=10)
     parser.add_argument("--als-bias-lambda", type=float, default=25.0)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--stages",
+        type=str,
+        default="knn_tune,knn_final,als_tune,als_final",
+        help="Comma-separated stages: knn_tune,knn_final,als_tune,als_final",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from saved progress.json and skip completed stages.",
+    )
 
     args = parser.parse_args()
 
@@ -514,6 +512,11 @@ def main() -> None:
     knn_candidates = [int(x) for x in args.knn_neighbors.split(",") if x]
     als_ranks = [int(x) for x in args.als_ranks.split(",") if x]
     als_regs = [float(x) for x in args.als_regs.split(",") if x]
+    requested_stages = [s.strip() for s in args.stages.split(",") if s.strip()]
+    valid_stages = {"knn_tune", "knn_final", "als_tune", "als_final"}
+    bad_stages = [s for s in requested_stages if s not in valid_stages]
+    if bad_stages:
+        raise SystemExit(f"Unknown stage(s): {bad_stages}. Valid: {sorted(valid_stages)}")
 
     # Spark session
     from pyspark.sql import SparkSession
@@ -532,6 +535,25 @@ def main() -> None:
         meta = json.load(open(processed_dir / "meta.json", "r"))
         num_users = int(meta["num_users"])
         num_items = int(meta["num_movies"])
+        out_dir = RESULTS_DIR / key
+        out_dir.mkdir(parents=True, exist_ok=True)
+        progress_path = out_dir / "progress.json"
+
+        progress = {
+            "dataset": key,
+            "completed_stages": [],
+            "knn_best": None,
+            "knn_results": None,
+            "als_best": None,
+            "als_results": None,
+        }
+        if args.resume and progress_path.exists():
+            progress = json.load(open(progress_path, "r"))
+            print(f"[resume] {key}: loaded completed_stages={progress.get('completed_stages', [])}")
+
+        def save_progress() -> None:
+            with open(progress_path, "w") as f:
+                json.dump(progress, f, indent=2)
 
         print(f"[prep] {key}: loading Step-1 artifacts...")
         train_df = _read_csv_gz(
@@ -555,145 +577,157 @@ def main() -> None:
             dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
         )
 
-        # ===== KNN tuning on val ranking (NDCG@10) =====
-        print(f"[knn] {key}: tuning item-item KNN...")
-        knn_best = None
-        for neigh_k in knn_candidates:
-            # Build similarity using train only (tuning)
-            neighbors, sims = train_item_item_knn(
-                train_df, num_users, num_items, neighbor_k=neigh_k
-            )
-            knn_val_metrics = evaluate_knn_ranking_for_test_negs(
-                test_negs_df=val_negs_df.rename(columns={"pos_movie_index": "pos_movie_index"}),  # keep same schema
-                test_df=val_df,
-                neighbors=neighbors,
-                sims=sims,
-                train_df_for_user_history=train_df,
-                ks=ks,
-            )
-            ndcg10 = float(knn_val_metrics.get("ndcg@10", 0.0))
-            print(f"[knn] {key}: neigh_k={neigh_k} val_ndcg@10={ndcg10:.6f}")
-            if knn_best is None or ndcg10 > knn_best["ndcg10"]:
-                knn_best = {"neigh_k": neigh_k, "ndcg10": ndcg10, "val_metrics": knn_val_metrics}
+        def should_run(stage: str) -> bool:
+            if stage not in requested_stages:
+                return False
+            if args.resume and stage in progress.get("completed_stages", []):
+                print(f"[skip] {key}: stage {stage} already completed in progress.json")
+                return False
+            return True
 
-        # Retrain KNN on train+val and evaluate on test
-        print(f"[knn] {key}: training final KNN with neigh_k={knn_best['neigh_k']}...")
-        trainval_df = pd.concat([train_df, val_df], ignore_index=True)
-        neighbors_final, sims_final = train_item_item_knn(
-            trainval_df, num_users, num_items, neighbor_k=knn_best["neigh_k"]
-        )
-        knn_test_metrics = evaluate_knn_ranking_for_test_negs(
-            test_negs_df=test_negs_df,
-            test_df=test_df,
-            neighbors=neighbors_final,
-            sims=sims_final,
-            train_df_for_user_history=trainval_df,
-            ks=ks,
-        )
-
-        # KNN rating prediction RMSE/MAE on test.
-        # (Use the same scoring function with candidate = [i] per test row.)
-        user_hist = {}
-        for u0, i0, r0 in zip(
-            trainval_df["user_index"].to_numpy(dtype=np.int32, copy=False),
-            trainval_df["movie_index"].to_numpy(dtype=np.int32, copy=False),
-            trainval_df["rating"].to_numpy(dtype=np.float32, copy=False),
-        ):
-            user_hist.setdefault(int(u0), {})[int(i0)] = float(r0)
-
-        # Precompute per-user mean for fallback.
-        user_mean = {}
-        for u0, d in user_hist.items():
-            user_mean[u0] = float(np.mean(list(d.values()))) if d else float(trainval_df["rating"].mean())
-        global_mean = float(trainval_df["rating"].mean())
-
-        test_u = test_df["user_index"].to_numpy(dtype=np.int32, copy=False)
-        test_i = test_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
-        test_r = test_df["rating"].to_numpy(dtype=np.float32, copy=False)
-
-        pred = np.zeros_like(test_r, dtype=np.float32)
-        for idx in range(len(test_r)):
-            u0 = int(test_u[idx])
-            i0 = int(test_i[idx])
-            pred[idx] = score_knn_user_item_normalized(
-                user_ratings=user_hist.get(u0, {}),
-                item_i=i0,
-                neighbors=neighbors_final,
-                sims=sims_final,
-                user_mean=user_mean.get(u0, global_mean),
-            )
-        rmse_knn, mae_knn = _rmse_mae(test_r, pred)
-
-        knn_results = {
-            "neighbor_k": knn_best["neigh_k"],
-            "val_ranking": knn_best["val_metrics"],
-            "test_ranking": knn_test_metrics,
-            "test_rating": {"rmse": rmse_knn, "mae": mae_knn},
-        }
-
-        # ===== ALS tuning on val ranking =====
-        print(f"[als] {key}: tuning ALS rank/reg on val...")
-        als_best = None
-        for rank in als_ranks:
-            for reg in als_regs:
-                out = train_and_evaluate_spark_als_residual_biases(
-                    spark=spark,
-                    train_df=train_df,
-                    val_df=val_df,
-                    test_df=test_df,
-                    val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-                    test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-                    num_users=num_users,
-                    num_items=num_items,
-                    rank=rank,
-                    reg_param=reg,
-                    max_iter=args.als_max_iter,
-                    bias_lambda=args.als_bias_lambda,
-                    seed=args.seed,
+        if should_run("knn_tune"):
+            print(f"[knn] {key}: tuning item-item KNN...")
+            knn_best = None
+            for neigh_k in knn_candidates:
+                neighbors, sims = train_item_item_knn(train_df, num_users, num_items, neighbor_k=neigh_k)
+                knn_val_metrics = evaluate_knn_ranking_for_test_negs(
+                    test_negs_df=val_negs_df,
+                    test_df=val_df,
+                    neighbors=neighbors,
+                    sims=sims,
+                    train_df_for_user_history=train_df,
                     ks=ks,
                 )
-                ndcg10 = float(out.get("val_ndcg@10", 0.0))
-                print(f"[als] {key}: rank={rank} reg={reg} val_ndcg@10={ndcg10:.6f}")
-                if als_best is None or ndcg10 > als_best["val_ndcg10"]:
-                    als_best = {"rank": rank, "reg": reg, "val_ndcg10": ndcg10, "out": out}
+                ndcg10 = float(knn_val_metrics.get("ndcg@10", 0.0))
+                print(f"[knn] {key}: neigh_k={neigh_k} val_ndcg@10={ndcg10:.6f}")
+                if knn_best is None or ndcg10 > knn_best["ndcg10"]:
+                    knn_best = {"neigh_k": neigh_k, "ndcg10": ndcg10, "val_metrics": knn_val_metrics}
+            progress["knn_best"] = knn_best
+            progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["knn_tune"]))
+            save_progress()
 
-        # Retrain best ALS on train+val and evaluate on test
-        print(f"[als] {key}: training final ALS rank={als_best['rank']} reg={als_best['reg']}...")
-        # We can reuse training function by providing val_df=test_df? But we want tune on val then final on train+val.
-        # We'll do: final train_df = concat(train,val), use val_df as original val only for metrics function; it won't matter for test metrics.
-        trainval_df = pd.concat([train_df, val_df], ignore_index=True)
-        # For final evaluation, we keep val as original val, but bias/ALS trained on train+val.
-        final_out = train_and_evaluate_spark_als_residual_biases(
-            spark=spark,
-            train_df=trainval_df,
-            val_df=val_df,
-            test_df=test_df,
-            val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-            test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
-            num_users=num_users,
-            num_items=num_items,
-            rank=als_best["rank"],
-            reg_param=als_best["reg"],
-            max_iter=args.als_max_iter,
-            bias_lambda=args.als_bias_lambda,
-            seed=args.seed,
-            ks=ks,
-        )
+        if should_run("knn_final"):
+            if progress.get("knn_best") is None:
+                raise SystemExit("knn_final requires knn_tune result in progress.json")
+            knn_best = progress["knn_best"]
+            print(f"[knn] {key}: training final KNN with neigh_k={knn_best['neigh_k']}...")
+            trainval_df = pd.concat([train_df, val_df], ignore_index=True)
+            neighbors_final, sims_final = train_item_item_knn(
+                trainval_df, num_users, num_items, neighbor_k=int(knn_best["neigh_k"])
+            )
+            knn_test_metrics = evaluate_knn_ranking_for_test_negs(
+                test_negs_df=test_negs_df,
+                test_df=test_df,
+                neighbors=neighbors_final,
+                sims=sims_final,
+                train_df_for_user_history=trainval_df,
+                ks=ks,
+            )
 
-        als_results = {
-            "best_rank": als_best["rank"],
-            "best_reg_param": als_best["reg"],
-            "val_ranking": final_out["val_ranking"],
-            "test_ranking": final_out["test_ranking"],
-            "test_rating": final_out["test_rating"],
+            user_hist = {}
+            for u0, i0, r0 in zip(
+                trainval_df["user_index"].to_numpy(dtype=np.int32, copy=False),
+                trainval_df["movie_index"].to_numpy(dtype=np.int32, copy=False),
+                trainval_df["rating"].to_numpy(dtype=np.float32, copy=False),
+            ):
+                user_hist.setdefault(int(u0), {})[int(i0)] = float(r0)
+            user_mean = {u0: float(np.mean(list(d.values()))) for u0, d in user_hist.items()}
+            global_mean = float(trainval_df["rating"].mean())
+            test_u = test_df["user_index"].to_numpy(dtype=np.int32, copy=False)
+            test_i = test_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
+            test_r = test_df["rating"].to_numpy(dtype=np.float32, copy=False)
+            pred = np.zeros_like(test_r, dtype=np.float32)
+            for idx in range(len(test_r)):
+                u0 = int(test_u[idx])
+                i0 = int(test_i[idx])
+                pred[idx] = score_knn_user_item_normalized(
+                    user_ratings=user_hist.get(u0, {}),
+                    item_i=i0,
+                    neighbors=neighbors_final,
+                    sims=sims_final,
+                    user_mean=user_mean.get(u0, global_mean),
+                )
+            rmse_knn, mae_knn = _rmse_mae(test_r, pred)
+
+            progress["knn_results"] = {
+                "neighbor_k": int(knn_best["neigh_k"]),
+                "val_ranking": knn_best["val_metrics"],
+                "test_ranking": knn_test_metrics,
+                "test_rating": {"rmse": rmse_knn, "mae": mae_knn},
+            }
+            progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["knn_final"]))
+            save_progress()
+
+        if should_run("als_tune"):
+            print(f"[als] {key}: tuning ALS rank/reg on val...")
+            als_best = None
+            for rank in als_ranks:
+                for reg in als_regs:
+                    out = train_and_evaluate_spark_als_residual_biases(
+                        spark=spark,
+                        train_df=train_df,
+                        val_df=val_df,
+                        test_df=test_df,
+                        val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                        test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                        num_users=num_users,
+                        num_items=num_items,
+                        rank=rank,
+                        reg_param=reg,
+                        max_iter=args.als_max_iter,
+                        bias_lambda=args.als_bias_lambda,
+                        seed=args.seed,
+                        ks=ks,
+                    )
+                    ndcg10 = float(out.get("val_ndcg@10", 0.0))
+                    print(f"[als] {key}: rank={rank} reg={reg} val_ndcg@10={ndcg10:.6f}")
+                    if als_best is None or ndcg10 > als_best["val_ndcg10"]:
+                        als_best = {"rank": rank, "reg": reg, "val_ndcg10": ndcg10}
+            progress["als_best"] = als_best
+            progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["als_tune"]))
+            save_progress()
+
+        if should_run("als_final"):
+            if progress.get("als_best") is None:
+                raise SystemExit("als_final requires als_tune result in progress.json")
+            als_best = progress["als_best"]
+            print(f"[als] {key}: training final ALS rank={als_best['rank']} reg={als_best['reg']}...")
+            trainval_df = pd.concat([train_df, val_df], ignore_index=True)
+            final_out = train_and_evaluate_spark_als_residual_biases(
+                spark=spark,
+                train_df=trainval_df,
+                val_df=val_df,
+                test_df=test_df,
+                val_negs_df=val_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                test_negs_df=test_negs_df[["user_index", "pos_movie_index", "neg_movie_index"]],
+                num_users=num_users,
+                num_items=num_items,
+                rank=int(als_best["rank"]),
+                reg_param=float(als_best["reg"]),
+                max_iter=args.als_max_iter,
+                bias_lambda=args.als_bias_lambda,
+                seed=args.seed,
+                ks=ks,
+            )
+            progress["als_results"] = {
+                "best_rank": int(als_best["rank"]),
+                "best_reg_param": float(als_best["reg"]),
+                "val_ranking": final_out["val_ranking"],
+                "test_ranking": final_out["test_ranking"],
+                "test_rating": final_out["test_rating"],
+            }
+            progress["completed_stages"] = sorted(set(progress["completed_stages"] + ["als_final"]))
+            save_progress()
+
+        results = {
+            "dataset": key,
+            "knn": progress.get("knn_results"),
+            "als": progress.get("als_results"),
+            "ks": ks,
+            "completed_stages": progress.get("completed_stages", []),
         }
-
-        out_dir = RESULTS_DIR / key
-        out_dir.mkdir(parents=True, exist_ok=True)
-        results = {"dataset": key, "knn": knn_results, "als": als_results, "ks": ks}
         with open(out_dir / "results.json", "w") as f:
             json.dump(results, f, indent=2)
-
         print(f"[done] {key}: wrote results to {out_dir / 'results.json'}")
 
     spark.stop()

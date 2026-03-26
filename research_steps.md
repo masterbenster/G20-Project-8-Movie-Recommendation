@@ -27,8 +27,8 @@ We implemented a reproducible Step 1 pipeline to:
 ### Commands run
 
 ```bash
-python3 /scripts/prepare_data.py --dataset 1m --num-negatives 99 --seed 42
-python3 /scripts/prepare_data.py --dataset 10m --num-negatives 99 --seed 42
+python3 scripts/prepare_data.py --dataset 1m --num-negatives 99 --seed 42
+python3 scripts/prepare_data.py --dataset 10m --num-negatives 99 --seed 42
 ```
 
 ### Outputs written
@@ -75,10 +75,10 @@ MovieLens 10M:
 - `num_val_negs_rows`: 6917922
 - `num_test_negs_rows`: 6917922
 
-### How to rerun later (if needed)
+### How to run again (if needed)
 
 ```bash
-python3 /scripts/prepare_data.py --dataset both --num-negatives 99 --seed 42
+python3 scripts/prepare_data.py --dataset both --num-negatives 99 --seed 42
 ```
 
 ## Step 2: Baseline Models
@@ -104,8 +104,8 @@ All metrics are computed on the Step-1 `test` split using `test_negs.csv.gz`
 
 ### Commands run
 ```bash
-python3 /scripts/baselines.py --dataset 1m --ks 5,10,20 --lambda-reg 25 --num-iters 10
-python3 /scripts/baselines.py --dataset 10m --ks 5,10,20 --lambda-reg 25 --num-iters 10
+python3 scripts/baselines.py --dataset 1m --ks 5,10,20 --lambda-reg 25 --num-iters 10
+python3 scripts/baselines.py --dataset 10m --ks 5,10,20 --lambda-reg 25 --num-iters 10
 ```
 
 ### Outputs written
@@ -151,7 +151,7 @@ Step 3 implements the collaborative filtering models from the project proposal:
 
 ### Command run (MovieLens 1M)
 ```bash
-python3 /scripts/collab_filtering.py \
+python3 scripts/collab_filtering.py \
   --dataset 1m --ks 5,10,20 --knn-neighbors 20 --als-ranks 20 --als-regs 0.1 --als-max-iter 8 --als-bias-lambda 25 --seed 42
 ```
 
@@ -162,6 +162,20 @@ python3 /scripts/collab_filtering.py \
 MovieLens 1M:
 - Item-item KNN: test rating RMSE=1.079, MAE=0.813; test NDCG@10=0.386
 - ALS (residual + biases): test rating RMSE=0.921, MAE=0.727; test NDCG@10=0.113
+
+### Command run (MovieLens 10M)
+```bash
+python3 scripts/collab_filtering.py \
+  --dataset 10m --resume --ks 5,10,20 --knn-neighbors 50 --als-ranks 20 --als-regs 0.1 --als-max-iter 8 --als-bias-lambda 25 --seed 42
+```
+
+### Outputs written
+- `data/results/collab_filtering/10m/results.json`
+
+### Quick metric snapshot (from `data/results/collab_filtering/10m/results.json`)
+MovieLens 10M:
+- Item-item KNN (neighbor_k=50): test rating RMSE=0.990, MAE=0.741; test NDCG@10=0.572
+- ALS (rank=20, reg=0.1): test rating RMSE=0.891, MAE=0.689; test NDCG@10=0.161
 
 ## Step 4: Neural Extension (NeuMF)
 
@@ -176,7 +190,7 @@ Step 4 implements a NeuMF (Neural Collaborative Filtering) model in PyTorch:
 
 ### Command run (MovieLens 1M)
 ```bash
-python3 /scripts/neumf.py \
+python3 scripts/neumf.py \
   --dataset 1m --epochs 6 --batch-size 2048 --lr 0.001 --weight-decay 1e-6 \
   --neg-ratio 1 --embed-dim 32 --mlp 64,32,16 --dropout 0.2 --seed 42 \
   --ks 5,10,20
