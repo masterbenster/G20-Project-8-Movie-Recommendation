@@ -209,3 +209,68 @@ MovieLens 1M NeuMF:
 - Test top-N:
   - Precision@10=0.0602
   - Recall@10=0.6023
+
+## Step 5: Packaging, Demo, and Report
+
+### What we implemented
+1. Exported ALS artifacts (latent factors + biases) after Step 3 so we can do fast top-N inference without re-training.
+2. Implemented a command line demo that loads the exported ALS artifacts and prints top-N recommended movies for a user.
+
+### Code added
+- `scripts/cli_recommend.py`
+
+### ALS artifacts used by the CLI
+For MovieLens 10M (exported from Step 3):
+- `data/models/als/10m/als_residual/mu.npy`
+- `data/models/als/10m/als_residual/bias_bu.npy`
+- `data/models/als/10m/als_residual/bias_bi.npy`
+- `data/models/als/10m/als_residual/user_factors.npy`
+- `data/models/als/10m/als_residual/item_factors.npy`
+- `data/models/als/10m/als_residual/meta.json`
+
+### Command run (demo)
+```bash
+python3 scripts/cli_recommend.py --dataset 10m --user-id 1 --top-k 10
+```
+
+### Outputs written / displayed
+The CLI prints ranked recommendations (movie title + genres) to stdout for the chosen user.
+
+### Cold-start CLI support (new-user ratings)
+
+We extended `scripts/cli_recommend.py` to support a basic cold-start demo: a brand-new user provides a few MovieLens ratings, and the CLI infers a compatible “user vector” from the exported ALS artifacts (no re-training).
+
+#### What changed
+- Added `--new-user-ratings` mode for new users.
+- Kept the existing `--user-id` / `--user-index` mode for existing MovieLens users.
+- Added optional cold-start controls:
+  - `--cold-start-reg` (ridge regularization strength; default uses `reg_param` from `meta.json` if present)
+  - `--cold-start-min-ratings` (warning if fewer than this many mapped ratings are provided)
+
+#### CLI usage
+- Existing user (unchanged):
+```bash
+python3 scripts/cli_recommend.py --dataset 10m --user-id 1 --top-k 10
+```
+- New user cold-start:
+```bash
+python3 scripts/cli_recommend.py --dataset 10m \
+  --new-user-ratings "1:5,260:3.5,1193:4" \
+  --top-k 10
+```
+
+#### Input format
+- `--new-user-ratings` expects comma-separated `movieId:rating` pairs.
+- Movie ids are MovieLens raw `movieId` values (as in the original MovieLens ratings files).
+
+#### How cold-start works (high level)
+- The CLI maps each provided MovieLens `movieId` to the internal contiguous `movie_index` using `data/processed/<dataset>/movie_map.csv`.
+- Using the exported ALS parameters, it estimates new user parameters from the few `(movie_index, rating)` points.
+- It scores all movies for the inferred user and prints the top-N recommendations.
+- By default, it excludes the movies included in the cold-start input (`--exclude-rated` is on by default).
+
+#### Artifacts required
+- ALS residual artifacts under `data/models/als/<dataset>/als_residual/`:
+  - `mu.npy`, `bias_bi.npy`, `item_factors.npy`
+  - (optionally `meta.json` for default `reg_param`)
+- Mapping file under `data/processed/<dataset>/movie_map.csv` for raw `movieId` -> `movie_index`.
