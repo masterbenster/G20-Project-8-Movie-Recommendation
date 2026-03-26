@@ -174,14 +174,13 @@ class NeuMF(nn.Module):
         return logits
 
 
-def build_user_rated_mask(ratings_clean_df: pd.DataFrame, num_users: int, num_items: int) -> np.ndarray:
+def build_user_rated_mask(ratings_df: pd.DataFrame, num_users: int, num_items: int) -> np.ndarray:
     """
-    For MovieLens 1M only (num_users * num_items is manageable).
     Returns bool mask of shape (num_users, num_items) where True means "user rated item".
     """
     mask = np.zeros((num_users, num_items), dtype=bool)
-    u = ratings_clean_df["user_index"].to_numpy(dtype=np.int32, copy=False)
-    i = ratings_clean_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
+    u = ratings_df["user_index"].to_numpy(dtype=np.int32, copy=False)
+    i = ratings_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
     mask[u, i] = True
     return mask
 
@@ -261,14 +260,12 @@ def main() -> None:
         processed_dir / "test_negs.csv.gz",
         dtypes={"user_index": np.int32, "pos_movie_index": np.int32, "neg_movie_index": np.int32},
     )
-    ratings_clean_df = _read_csv_gz(
-        processed_dir / "ratings_clean.csv.gz",
-        dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
-    )
-
     print(f"[prep] dataset={args.dataset} users={num_users} items={num_items} train_rows={len(train_df)}")
 
-    rated_mask = build_user_rated_mask(ratings_clean_df, num_users=num_users, num_items=num_items)
+    # Negative sampling protocol consistency:
+    # Build the "user rated" mask only from TRAIN interactions so NeuMF training negatives
+    # match the candidate negatives used in val/test evaluation.
+    rated_mask = build_user_rated_mask(train_df, num_users=num_users, num_items=num_items)
 
     # Build positive training tensors.
     u_pos = train_df["user_index"].to_numpy(dtype=np.int32, copy=False)

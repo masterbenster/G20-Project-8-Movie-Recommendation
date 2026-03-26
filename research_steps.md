@@ -274,3 +274,11 @@ python3 scripts/cli_recommend.py --dataset 10m \
   - `mu.npy`, `bias_bi.npy`, `item_factors.npy`
   - (optionally `meta.json` for default `reg_param`)
 - Mapping file under `data/processed/<dataset>/movie_map.csv` for raw `movieId` -> `movie_index`.
+
+## Future / Stretch Goals
+
+### Stretch goal: BPR-MF or implicit ALS
+The proposal lists BPR-MF or implicit ALS as a stretch goal under Step 3. This has not been implemented yet.
+
+### NeuMF scaling beyond 1M
+The proposal expects starting NeuMF on MovieLens 1M and scaling if feasible. We implemented and evaluated NeuMF only on MovieLens 1M so far.
