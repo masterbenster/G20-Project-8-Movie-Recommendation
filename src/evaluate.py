@@ -31,47 +31,45 @@ def ndcg_at_k(recommended, relevant, k):
     idcg = sum(1 / np.log2(i + 2) for i in range(min(len(relevant), k)))
     return dcg / idcg if idcg > 0 else 0.0
 
-def evaluate_ranking(model, train, test, movies_df, k_list=[5, 10, 20], threshold=4.0):
+def evaluate_ranking(model, train, test, movies_df, k_list=[5, 10, 20], threshold=4.0, max_users=500, n_negatives=99):
     """
-    For each user in test: recommend top-max(k_list) unseen movies,
-    treat test items rated >= threshold as relevant.
+    For each user: rank 1 positive test item against n_negatives random unseen items.
+    Standard sampled evaluation protocol.
     """
     results = {k: {"P": [], "R": [], "NDCG": []} for k in k_list}
     max_k   = max(k_list)
 
-    # Items each user has already seen in train
     seen = train.groupby("user_idx")["item_idx"].apply(set).to_dict()
-
-    # Relevant items per user in test (rated >= threshold)
     relevant_items = (
         test[test["rating"] >= threshold]
         .groupby("user_idx")["item_idx"].apply(list).to_dict()
     )
 
     all_items = np.arange(train["item_idx"].max() + 1)
+    user_list = list(relevant_items.keys())[:max_users]
+    rng       = np.random.default_rng(42)
 
-    for user_idx, relevant in relevant_items.items():
-        user_seen = seen.get(user_idx, set())
-        candidates = np.array([i for i in all_items if i not in user_seen])
+    import pandas as pd
+    for user_idx in user_list:
+        relevant  = relevant_items[user_idx]
+        user_seen = seen.get(user_idx, set()) | set(relevant)
+        unseen    = np.array([i for i in all_items if i not in user_seen])
 
-        if len(candidates) == 0:
+        if len(unseen) < n_negatives:
             continue
 
-        # Score all unseen items
-        import pandas as pd
-        df_cand = pd.DataFrame({
-            "user_idx": user_idx,
-            "item_idx": candidates
-        })
-        scores = model.predict(df_cand)
-        top_k_idx = candidates[np.argsort(scores)[::-1][:max_k]]
+        negatives = rng.choice(unseen, size=n_negatives, replace=False)
+        candidates = np.concatenate([relevant, negatives])
+
+        df_cand = pd.DataFrame({"user_idx": user_idx, "item_idx": candidates})
+        scores  = model.predict(df_cand)
+        ranked  = candidates[np.argsort(scores)[::-1]]
 
         for k in k_list:
-            results[k]["P"].append(precision_at_k(top_k_idx, relevant, k))
-            results[k]["R"].append(recall_at_k(top_k_idx, relevant, k))
-            results[k]["NDCG"].append(ndcg_at_k(top_k_idx, relevant, k))
+            results[k]["P"].append(precision_at_k(ranked, relevant, k))
+            results[k]["R"].append(recall_at_k(ranked, relevant, k))
+            results[k]["NDCG"].append(ndcg_at_k(ranked, relevant, k))
 
-    # Average across users
     summary = {}
     for k in k_list:
         summary[f"P@{k}"]    = round(np.mean(results[k]["P"]), 4)

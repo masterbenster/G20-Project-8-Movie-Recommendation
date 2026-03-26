@@ -5,6 +5,7 @@ from src.data import load_1m, time_split
 from src.baselines import GlobalMean, BiasModel
 from src.als import ALSModel
 from src.knn import ItemKNN
+from src.neumf import NeuMFModel
 from src.evaluate import evaluate_rating, evaluate_ranking
 
 print("Loading ml-1m...")
@@ -30,8 +31,15 @@ knn = ItemKNN(k=20)
 knn.fit(train)
 print("ItemKNN:   ", evaluate_rating(knn, val))
 
+print("\nTraining NeuMF...")
+neumf = NeuMFModel(emb_dim=32, layers=[64,32,16], epochs=10, lr=0.001, batch_size=1024)
+neumf.fit(train)
+print("NeuMF:     ", evaluate_rating(neumf, val))
+
 print("\n--- Ranking Metrics (Test Set, threshold=4.0) ---")
 print("Evaluating ALS...")
-print("ALS:   ", evaluate_ranking(als, train, test, movies, k_list=[5, 10, 20]))
+print("ALS:   ", evaluate_ranking(als, train, test, movies, k_list=[5,10,20], max_users=500))
 print("Evaluating KNN...")
-print("KNN:   ", evaluate_ranking(knn, train, test, movies, k_list=[5, 10, 20]))
+print("KNN:   ", evaluate_ranking(knn, train, test, movies, k_list=[5,10,20], max_users=500))
+print("Evaluating NeuMF...")
+print("NeuMF: ", evaluate_ranking(neumf, train, test, movies, k_list=[5,10,20], max_users=500))
