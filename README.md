@@ -84,28 +84,47 @@ You can ignore `progress.json` files unless you are resuming a long run.
 ## CLI
 The CLI prints top-`K` recommended movies using the trained ALS residual factors (from `data/models/als/<dataset>/als_residual/`).
 
+### Interactive Shell (Recommended)
+If you want a short, repeated workflow (no long flags), start:
+
+```bash
+python3 scripts/recommend_shell.py
+```
+
+You will be prompted for:
+- dataset (`1m` or `10m`)
+- mode: existing user vs cold-start
+- input (a raw `userId` for existing users, or `movieId:rating,...` for cold-start)
+- `top-k` and output format (`text` or `json`)
+
+The shell formats recommendations readably (title + score + genres) so you can skim results quickly.
+
 Flags used in the examples:
 - `--dataset {1m|10m}`: select which MovieLens variant to load (the corresponding ALS artifacts must exist).
-- `--user-id`: an existing user's *raw* MovieLens `userId` (not an internal contiguous index). The script maps it via `data/processed/<dataset>/user_map.csv`.
-- `--new-user-ratings`: cold-start mode. A quoted, comma-separated list of `movieId:rating` pairs using *raw* MovieLens `movieId`s (example format: `"1:5,260:3.5,1193:4"`).
+- `--user-id` (alias: `--user`): an existing user's *raw* MovieLens `userId` (not an internal contiguous index). The script maps it via `data/processed/<dataset>/user_map.csv`.
+- `--ratings` (alias: `--new-user-ratings`): cold-start mode. A quoted, comma-separated list of `movieId:rating` pairs using *raw* MovieLens `movieId`s (example format: `"1:5,260:3.5,1193:4"`).
   - Each `movieId:rating` pair means: user rated the MovieLens movie with id `movieId` as `rating`.
   - In the example: `1:5` means `(movieId=1, rating=5.0)`, `260:3.5` means `(movieId=260, rating=3.5)`, and `1193:4` means `(movieId=1193, rating=4.0)`.
   - Ratings should be on the MovieLens 0.5–5 scale.
+- `--ratings-file <path>`: alternative to `--ratings`. A text file containing `movieId:rating` pairs (comma- or newline-separated).
 - `--top-k`: how many movies to print (default `10`).
+- `--format {text|json}`: output format (default `text`). Use `json` for machine-readable results.
 
 Existing user:
 
 ```bash
-python3 scripts/cli_recommend.py --dataset 10m --user-id 1 --top-k 10
+python3 scripts/cli_recommend.py --dataset 10m --user 1 --top-k 10
 ```
 
 Cold-start user:
 
 ```bash
-python3 scripts/cli_recommend.py --dataset 10m --new-user-ratings "1:5,260:3.5,1193:4" --top-k 10
+python3 scripts/cli_recommend.py --dataset 10m --ratings "1:5,260:3.5,1193:4" --top-k 10
 ```
 
 Notes:
+- By default (`--format text`), the CLI prints a compact ranked list: `rank. title | score | genres`.
+- Use `--format json` if you want structured output (including `movieId_raw` when available).
 - For cold-start, the script infers a new user latent vector from the provided `movieId:rating` pairs (then excludes those provided movies from recommendations by default).
 - For existing users, recommendations exclude movies the user has already rated (by default it excludes from the full processed history via `--exclude-seen-scope all`).
 

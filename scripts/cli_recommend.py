@@ -52,6 +52,23 @@ def _parse_movie_ratings(pairs: str) -> list[tuple[int, float]]:
     return out
 
 
+def _read_ratings_file(path: pathlib.Path) -> str:
+    """
+    Read cold-start ratings from a text file.
+
+    Supported formats:
+    - comma-separated pairs: "1:5,260:3.5,1193:4"
+    - newline-separated pairs:
+        1:5
+        260:3.5
+        1193:4
+    """
+    content = path.read_text(encoding="utf-8")
+    # Normalize whitespace and allow newlines to act like commas.
+    content = content.replace("\n", ",").replace("\r", ",")
+    return content.strip()
+
+
 def _estimate_new_user_from_ratings(
     *,
     movie_indices: np.ndarray,  # (n,)
@@ -171,10 +188,17 @@ def _load_rated_movies_for_user(history_csv_gz: pathlib.Path, user_index: int, c
 def main() -> None:
     parser = argparse.ArgumentParser(description="Top-N movie recommendations CLI (ALS residual factors).")
     parser.add_argument("--dataset", choices=["1m", "10m"], required=True)
-    parser.add_argument("--user-id", type=int, default=None, help="MovieLens raw userId.")
-    parser.add_argument("--user-index", type=int, default=None, help="Contiguous user_index used by processed data.")
+    parser.add_argument("--user-id", "--user", dest="user_id", type=int, default=None, help="MovieLens raw userId.")
+    parser.add_argument(
+        "--user-index",
+        type=int,
+        default=None,
+        help="Contiguous user_index used by processed data (mostly for debugging).",
+    )
     parser.add_argument(
         "--new-user-ratings",
+        "--ratings",
+        dest="new_user_ratings",
         type=str,
         default=None,
         help=(
@@ -182,7 +206,22 @@ def main() -> None:
             "e.g. '1:5,260:3.5,1193:4'. Mutually exclusive with --user-id/--user-index."
         ),
     )
+    parser.add_argument(
+        "--ratings-file",
+        type=str,
+        default=None,
+        help="Path to a text file containing 'movieId:rating' pairs (comma- or newline-separated).",
+    )
     parser.add_argument("--top-k", type=int, default=10)
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format. 'text' is human-readable; 'json' is machine-readable.",
+    )
+    parser.add_argument("--max-title-chars", type=int, default=120, help="Truncate long titles for text output.")
+    parser.add_argument("--score-decimals", type=int, default=4, help="Number of decimal places for the score.")
+    parser.add_argument("--show-movie-index", action="store_true", default=False, help="Include internal movie_index in JSON/text.")
     parser.add_argument(
         "--exclude-rated",
         dest="exclude_rated",
@@ -216,12 +255,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.ratings_file is not None:
+        if args.new_user_ratings is not None:
+            raise SystemExit("Use either --ratings OR --ratings-file, not both.")
+        args.new_user_ratings = _read_ratings_file(pathlib.Path(args.ratings_file))
+
     cold_start_mode = args.new_user_ratings is not None
     existing_user_mode = (args.user_id is not None) or (args.user_index is not None)
     if cold_start_mode and existing_user_mode:
-        raise SystemExit("Use either --new-user-ratings OR --user-id/--user-index, not both.")
+        raise SystemExit("Use either --ratings/--ratings-file OR --user-id/--user-index, not both.")
     if not cold_start_mode and not existing_user_mode:
-        raise SystemExit("Provide either --new-user-ratings or exactly one of --user-id/--user-index.")
+        raise SystemExit("Provide either --ratings/--ratings-file or exactly one of --user-id/--user-index.")
     if not cold_start_mode:
         if (args.user_id is None) == (args.user_index is None):
             raise SystemExit("Provide exactly one of --user-id or --user-index.")
@@ -251,8 +295,7 @@ def main() -> None:
     if cold_start_mode:
         parsed = _parse_movie_ratings(args.new_user_ratings)
         if len(parsed) == 0:
-            raise SystemExit("--new-user-ratings parsed to 0 pairs.")
-
+            raise SystemExit("--new-user-ratings/--ratings parsed to 0 pairs.")
         movie_map = _load_movie_index_map(processed_dir)
         movie_id_to_index = {
             int(mid): int(mi)
@@ -267,9 +310,11 @@ def main() -> None:
         mapped_ratings: list[float] = []
         exclude_movie_indices: set[int] = set()
         seen_movie_indices: set[int] = set()
+        unknown_movie_ids: list[int] = []
         for movie_id_raw, rating in parsed:
             if movie_id_raw not in movie_id_to_index:
                 print(f"[warn] Unknown movieId_raw={movie_id_raw} for dataset={dataset_key}; skipping.", file=sys.stderr)
+                unknown_movie_ids.append(movie_id_raw)
                 continue
             mi = movie_id_to_index[movie_id_raw]
             # If the same movie appears multiple times, keep the last occurrence
@@ -345,12 +390,73 @@ def main() -> None:
 
     titles, genres = _load_movie_titles(dataset_key, processed_dir)
 
+    movie_map = None
+    if args.format == "json" or args.show_movie_index:
+        # movie_map lets us include stable raw MovieLens ids in machine output.
+        movie_map_df = pd.read_csv(processed_dir / "movie_map.csv")
+        movie_map = movie_map_df.set_index("movie_index")
+
+    score_decimals = int(args.score_decimals)
+    score_fmt = f"{{:.{score_decimals}f}}"
+
+    if args.format == "json":
+        recommendations: list[dict[str, Any]] = []
+        for rank, mi in enumerate(top_idx[:k], start=1):
+            mi = int(mi)
+            title = titles[mi] if mi < len(titles) else ""
+            genre = genres[mi] if mi < len(genres) else ""
+            score = float(pred[mi])
+
+            rec: dict[str, Any] = {"rank": rank, "movie_index": mi, "score": score, "title": title, "genres": genre}
+            if movie_map is not None and mi in movie_map.index:
+                rec["movieId_raw"] = int(movie_map.loc[mi, "movieId_raw"])
+            if args.show_movie_index:
+                rec["movie_index"] = mi
+            recommendations.append(rec)
+
+        payload: dict[str, Any] = {
+            "dataset": dataset_key,
+            "mode": "cold_start" if cold_start_mode else "existing_user",
+            "top_k": k,
+            "recommendations": recommendations,
+        }
+        if cold_start_mode:
+            payload["cold_start_provided_pairs"] = len(parsed)
+        else:
+            payload["userId_raw"] = args.user_id
+        print(json.dumps(payload, indent=2))
+        return
+
+    # Default: compact human-readable text.
+    if cold_start_mode:
+        # `parsed` + `unknown_movie_ids` are only defined in this branch.
+        header_extra = f"from {len(mapped_movie_indices)} provided ratings"
+        if unknown_movie_ids:
+            header_extra += f" ({len(unknown_movie_ids)} skipped unknown movieIds)"
+        if args.exclude_rated:
+            header_extra += " (excluding provided rated movies)"
+        print(f"Top {k} recommendations for cold-start user ({dataset_key}): {header_extra}")
+    else:
+        header = f"Top {k} recommendations for userId={args.user_id} ({dataset_key})"
+        if args.exclude_rated:
+            header += ": excluding already-rated movies"
+        print(header)
+
     for rank, mi in enumerate(top_idx[:k], start=1):
         mi = int(mi)
         title = titles[mi] if mi < len(titles) else ""
         genre = genres[mi] if mi < len(genres) else ""
         score = float(pred[mi])
-        print(f"{rank}. movie_index={mi} score={score:.4f} title={title} genres={genre}")
+
+        if args.max_title_chars is not None and len(title) > int(args.max_title_chars):
+            title = title[: int(args.max_title_chars)].rstrip() + "..."
+
+        genre_disp = str(genre).replace("|", ", ")
+        score_disp = score_fmt.format(score)
+        if args.show_movie_index:
+            print(f"{rank:2d}. {title} | movie_index={mi} | score={score_disp} | genres={genre_disp}")
+        else:
+            print(f"{rank:2d}. {title} | score={score_disp} | genres={genre_disp}")
 
 
 if __name__ == "__main__":
