@@ -13,6 +13,7 @@ DATA_DIR = ROOT_DIR / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
 RAW_DIR = DATA_DIR / "raw"
 RESULTS_DIR = DATA_DIR / "results" / "collab_filtering"
+MODELS_DIR = DATA_DIR / "models" / "als"
 
 
 def _read_csv_gz(path: pathlib.Path, dtypes=None, usecols=None) -> pd.DataFrame:
@@ -313,6 +314,7 @@ def train_and_evaluate_spark_als_residual_biases(
     bias_lambda: float,
     seed: int,
     ks: list[int],
+    export_artifacts_dir: pathlib.Path | None = None,
 ) -> dict:
     """
     Train Spark ALS on residual ratings:
@@ -377,6 +379,42 @@ def train_and_evaluate_spark_als_residual_biases(
         coldStartStrategy="nan",
     )
     als_model = als.fit(als_train)
+
+    # Optionally export ALS latent factors + biases for use in a CLI demo.
+    if export_artifacts_dir is not None:
+        export_artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save scalar/bias parameters.
+        np.save(export_artifacts_dir / "mu.npy", np.asarray(mu, dtype=np.float32))
+        np.save(export_artifacts_dir / "bias_bu.npy", b_u.astype(np.float32, copy=False))
+        np.save(export_artifacts_dir / "bias_bi.npy", b_i.astype(np.float32, copy=False))
+
+        # Export user/item factors.
+        user_factors = np.zeros((num_users, int(rank)), dtype=np.float32)
+        item_factors = np.zeros((num_items, int(rank)), dtype=np.float32)
+
+        # Spark ALS factor ids are contiguous starting at 0.
+        # We fill missing ids (e.g. cold-start) with zeros.
+        for row in als_model.userFactors.select("id", "features").collect():
+            user_factors[int(row["id"])] = np.asarray(row["features"], dtype=np.float32)
+
+        for row in als_model.itemFactors.select("id", "features").collect():
+            item_factors[int(row["id"])] = np.asarray(row["features"], dtype=np.float32)
+
+        np.save(export_artifacts_dir / "user_factors.npy", user_factors)
+        np.save(export_artifacts_dir / "item_factors.npy", item_factors)
+
+        meta = {
+            "rank": int(rank),
+            "reg_param": float(reg_param),
+            "max_iter": int(max_iter),
+            "bias_lambda": float(bias_lambda),
+            "num_users": int(num_users),
+            "num_items": int(num_items),
+            "seed": int(seed),
+        }
+        with open(export_artifacts_dir / "meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
 
     # Function to predict for arbitrary (u,i) pairs and then add biases back.
     def _predict_pairs(pairs_df_pd: pd.DataFrame, pairs_name: str) -> pd.DataFrame:
@@ -505,6 +543,11 @@ def main() -> None:
         action="store_true",
         help="Resume from saved progress.json and skip completed stages.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force re-run requested stages even if marked completed in progress.json.",
+    )
 
     args = parser.parse_args()
 
@@ -580,7 +623,7 @@ def main() -> None:
         def should_run(stage: str) -> bool:
             if stage not in requested_stages:
                 return False
-            if args.resume and stage in progress.get("completed_stages", []):
+            if args.resume and (not args.force) and stage in progress.get("completed_stages", []):
                 print(f"[skip] {key}: stage {stage} already completed in progress.json")
                 return False
             return True
@@ -693,6 +736,7 @@ def main() -> None:
             als_best = progress["als_best"]
             print(f"[als] {key}: training final ALS rank={als_best['rank']} reg={als_best['reg']}...")
             trainval_df = pd.concat([train_df, val_df], ignore_index=True)
+            export_dir = MODELS_DIR / key / "als_residual"
             final_out = train_and_evaluate_spark_als_residual_biases(
                 spark=spark,
                 train_df=trainval_df,
@@ -708,6 +752,7 @@ def main() -> None:
                 bias_lambda=args.als_bias_lambda,
                 seed=args.seed,
                 ks=ks,
+                export_artifacts_dir=export_dir,
             )
             progress["als_results"] = {
                 "best_rank": int(als_best["rank"]),

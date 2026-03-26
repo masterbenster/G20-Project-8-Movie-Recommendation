@@ -4,6 +4,7 @@
 # data folders
 data/raw/
 data/processed/
+data/models/
 data/splits/
 
 # experiment outputs / artifacts
