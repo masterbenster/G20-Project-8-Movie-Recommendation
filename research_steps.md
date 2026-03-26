@@ -87,4 +87,4 @@ Notes:
 
 ## Status Note
 
-The earlier repo state used a different split strategy and invalid ranking negatives. Anything generated before the corrected pipeline should be treated as stale.
+Use `make quick` for a fast `1m` rerun and `make all` for the full project rerun.
