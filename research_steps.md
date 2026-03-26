@@ -1,122 +1,90 @@
 # Research Steps Log
 
-This file tracks the current methodology and rerun instructions for the project code in this repo.
+This file documents the simplified reproduction flow for the current corrected pipeline.
 
-## Current Methodology
+## Official Reproduction Commands
 
-### Step 1: Data Pipeline and Splits
-
-Implemented in `scripts/prepare_data.py`:
-
-1. Load MovieLens ratings from the local zip archives.
-2. Deduplicate `(userId, movieId)` pairs by keeping the latest timestamped rating.
-3. Build a time-aware per-user `80/10/10` split:
-   - oldest 80% -> `train`
-   - next 10% -> `val`
-   - most recent 10% -> `test`
-4. Build contiguous `user_index` and `movie_index` mappings.
-5. Evaluate ranking on sampled held-out events with on-the-fly negatives from full user history.
-6. Validate:
-   - no train/val/test overlap
-   - no seen-item negatives
-   - consistent negatives-per-event for generated candidate groups
-
-Rerun:
+Quick reproducibility path:
 
 ```bash
-python3 scripts/prepare_data.py --dataset 1m --num-negatives 99 --seed 42
-python3 scripts/prepare_data.py --dataset 10m --num-negatives 99 --seed 42
+make quick
 ```
 
-### Step 2: Baseline Models
-
-Implemented in `scripts/baselines.py`:
-
-- rating baselines:
-  - `global_mean`
-  - `user_mean`
-  - `item_mean`
-  - `user_movie_bias`
-- ranking baselines:
-  - `popularity`
-  - `user_movie_bias_ranking`
-  - `metadata_global`
-  - `genre_tag_profile`
-
-Rerun:
+Full rerun path:
 
 ```bash
-python3 scripts/baselines.py --dataset 1m --ks 5,10,20 --lambda-reg 25 --num-iters 10
-python3 scripts/baselines.py --dataset 10m --ks 5,10,20 --lambda-reg 25 --num-iters 10
+make all
 ```
 
-### Step 3: Collaborative Filtering Models
+If the long `10m` collaborative-filtering run is interrupted:
 
-Implemented in `scripts/collab_filtering.py`:
+```bash
+make cf-10m-resume
+```
 
-- item-item KNN with cosine similarity
+## What Each Target Runs
+
+### `make prep`
+
+- `scripts/prepare_data.py` for `1m`
+- `scripts/prepare_data.py` for `10m`
+
+Method:
+
+- deduplicate by latest `(user, movie)` rating
+- time-aware per-user `80/10/10` split
+- full-history negative exclusion
+- on-the-fly ranking candidate generation
+- split and candidate validation checks
+
+### `make baselines`
+
+- `scripts/baselines.py` for `1m`
+- `scripts/baselines.py` for `10m`
+
+Models:
+
+- rating: `global_mean`, `user_mean`, `item_mean`, `user_movie_bias`
+- ranking: `popularity`, `user_movie_bias_ranking`, `metadata_global`, `genre_tag_profile`
+
+### `make cf`
+
+- `scripts/collab_filtering.py` for `1m`
+- `scripts/collab_filtering.py` for `10m`
+
+Models:
+
+- item-item KNN
 - ALS residual model with bias terms
-- event-based ranking evaluation keyed by held-out positive event
-- on-the-fly candidate generation capped at 20,000 held-out events by default
-- clean separation between tuning validation metrics and final test metrics
 
-Rerun:
+Notes:
 
-```bash
-python3 scripts/collab_filtering.py \
-  --dataset 1m \
-  --ks 5,10,20 \
-  --knn-neighbors 20,50 \
-  --als-ranks 10,20 \
-  --als-regs 0.1,1.0 \
-  --als-max-iter 8 \
-  --als-bias-lambda 25 \
-  --seed 42
-```
+- ranking evaluation is event-based and sampled
+- default ranking cap is `20,000` held-out events per dataset
+- `10m` uses safer Spark defaults and finer ALS block settings
+- tuning validation metrics are kept separate from final test metrics
 
-Use the same command shape for `10m`, typically with `--resume`.
+### `make neumf`
 
-### Step 4: NeuMF
+- `scripts/neumf.py` for `1m`
 
-Implemented in `scripts/neumf.py`:
+Notes:
 
-- NeuMF on MovieLens 1M
-- train negative sampling from train history
-- event-based ranking evaluation for validation and test
+- NeuMF is currently `1m` only
+- validation and test ranking use the same event-based candidate logic
 
-Rerun:
+### `make test`
 
-```bash
-python3 scripts/neumf.py \
-  --dataset 1m \
-  --epochs 6 \
-  --batch-size 2048 \
-  --lr 0.001 \
-  --weight-decay 1e-6 \
-  --neg-ratio 1 \
-  --embed-dim 32 \
-  --mlp 64,32,16 \
-  --dropout 0.2 \
-  --seed 42 \
-  --ks 5,10,20
-```
+- unit tests under `tests/`
 
-### Step 5: Packaging and Demo
+## Important Output Files
 
-Implemented in `scripts/cli_recommend.py`:
-
-- existing-user ALS recommendations
-- cold-start ALS user-vector inference from seed ratings
-- seen-item exclusion with `--exclude-seen-scope {train,all}`
-- corrected title decoding for MovieLens metadata
-
-Example commands:
-
-```bash
-python3 scripts/cli_recommend.py --dataset 10m --user-id 1 --top-k 10
-python3 scripts/cli_recommend.py --dataset 10m --new-user-ratings "1:5,260:3.5,1193:4" --top-k 10
-```
+- processed metadata: `data/processed/<dataset>/meta.json`
+- baseline summaries: `data/results/baselines/<dataset>/results.json`
+- collaborative-filtering summaries: `data/results/collab_filtering/<dataset>/results.json`
+- NeuMF summary: `data/results/neumf/1m/results.json`
+- CLI ALS artifacts: `data/models/als/<dataset>/als_residual/`
 
 ## Status Note
 
-The earlier repo state used a different split strategy and stale ranking negatives. Any previously generated ranking metrics should be considered invalid for final reporting until the full experiment suite is rerun with the current pipeline.
+The earlier repo state used a different split strategy and invalid ranking negatives. Anything generated before the corrected pipeline should be treated as stale.
