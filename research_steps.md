@@ -112,6 +112,14 @@ Notes:
 
 The CLI still uses ALS artifacts for the main recommendation flow.
 
+Why ALS is used for the CLI instead of KNN:
+
+- KNN is the stronger ranking model in the saved evaluation results
+- ALS is still used for the CLI because its exported latent factors and bias terms make interactive scoring much simpler
+- existing-user recommendations can be scored with one user-factor vector against all item factors
+- cold-start recommendations are easier with ALS because a new user vector can be inferred directly from a few provided ratings
+- a KNN-backed CLI would be possible, but it would require more stateful user-history logic and a less clean cold-start path
+
 Cold-start behavior now has two paths:
 
 - if enough mapped ratings are provided, infer a new ALS user vector
