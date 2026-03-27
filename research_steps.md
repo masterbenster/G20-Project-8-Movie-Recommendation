@@ -1,6 +1,6 @@
 # Research Steps Log
 
-This file is the report-style source of truth for the corrected pipeline and reproduction flow.
+This file is the report-style source of truth for things implemented in the project.
 
 ## Canonical Methodology
 
@@ -143,3 +143,25 @@ Use `make quick` for a fast `1m` rerun, then `make all` for the full corrected p
 
 - scale NeuMF to a sampled `10m` subset if more compute time is available
 - implement a jointly biased ALS formulation or a ranking-optimized factor model such as BPR or implicit ALS if deeper model work is needed
+
+## Proposal Revision Notes
+
+These notes describe the main differences between the original proposal and the delivered project, along with why those changes were made.
+
+- Split policy changed from leave-last-two-out wording to a per-user time-aware `80/10/10` split.
+  Reason: the delivered project evaluates both rating prediction and top-N ranking, and a per-user `80/10/10` split gives substantially larger validation and test blocks than leave-last-two-out. That produces more stable RMSE estimates, more stable sampled ranking estimates, and more useful validation data for hyperparameter tuning. Leave-last-two-out is better if the only goal is a strict next-item setup, but the `80/10/10` split is a better fit for this project’s combined rating-and-ranking evaluation.
+
+- Ranking evaluation changed from generic user-averaged wording to sampled event-based evaluation.
+  Reason: the delivered project uses one held-out interaction plus sampled negatives because that is much more tractable at MovieLens scale and aligns cleanly with the candidate-generation pipeline used for all models. A full user-level relevant-set evaluation would require a separate relevance definition, much heavier scoring, and a different metric pipeline. For this project, sampled event-based evaluation is the more practical and internally consistent choice, even though it is a narrower definition of ranking quality than exhaustive user-level evaluation.
+
+- ALS description changed from “ALS with biases” to ALS on residual ratings with separately estimated bias terms.
+  Reason: Spark MLlib gives a stable explicit-feedback ALS solver, but not a turnkey jointly biased ALS implementation with the same ease of training and export. Estimating biases separately and fitting ALS on residuals preserves most of the intended behavior while keeping the system simpler, easier to debug, and easier to package for the CLI. A jointly trained biased factor model could be better in theory, but the residual formulation was the better engineering choice for the delivered project.
+
+- The abstract and model framing were updated so ALS is no longer assumed to be the top-ranking winner.
+  Reason: the rerun results show KNN is the strongest ranking model, so the delivered project should be described as a comparison whose winner is determined by the shared evaluation protocol rather than by the original modeling expectation.
+
+- NeuMF scope changed from “scale up to 10M if feasible” language to explicit `1m` implementation with `10m` scale-up framed as future work.
+  Reason: the neural model is the most expensive part of the project and was always secondary to the main baseline/KNN/ALS comparison. Running NeuMF on `1m` was enough to validate the neural extension, compare it against the other models, and keep the project manageable. Scaling NeuMF further would add cost and complexity without improving the core reproducibility of the main pipeline, so treating larger-scale NeuMF as future work was the better scope decision.
+
+- Ranking metric definitions were rewritten for the one-positive-per-event candidate setup.
+  Reason: this was not a methodological improvement so much as a clarity correction. The original proposal used generic recommender-metric definitions, but the delivered project uses event-level hit-style Precision@K and Recall@K under sampled candidate groups. Rewriting the definitions was necessary so the project description accurately matches what the code and saved results actually mean.
