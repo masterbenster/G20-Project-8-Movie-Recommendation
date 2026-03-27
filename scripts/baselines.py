@@ -365,6 +365,10 @@ def main() -> None:
             processed_dir / "train.csv.gz",
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
+        val_df = read_csv_gz(
+            processed_dir / "val.csv.gz",
+            dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
+        )
         test_df = read_csv_gz(
             processed_dir / "test.csv.gz",
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
@@ -374,6 +378,7 @@ def main() -> None:
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
         movie_map_df = pd.read_csv(processed_dir / "movie_map.csv")
+        trainval_df = pd.concat([train_df, val_df], ignore_index=True)
         max_ranking_events = default_max_ranking_events(key) if args.max_ranking_events is None else args.max_ranking_events
         test_events_df, test_negs_df, ranking_eval_summary = build_candidate_groups(
             split_df=test_df,
@@ -384,16 +389,16 @@ def main() -> None:
             max_events=max_ranking_events,
         )
 
-        print(f"[bias] {key}: training user/movie bias model...")
+        print(f"[bias] {key}: training final baseline models on train+val...")
         mu_train, b_u, b_i = train_user_movie_bias(
-            train_df=train_df,
+            train_df=trainval_df,
             num_users=num_users,
             num_movies=num_movies,
             lambda_reg=args.lambda_reg,
             num_iters=args.num_iters,
         )
-        user_mean = train_user_mean_predictor(train_df=train_df, num_users=num_users, fallback=mu_train)
-        item_mean = train_item_mean_predictor(train_df=train_df, num_movies=num_movies, fallback=mu_train)
+        user_mean = train_user_mean_predictor(train_df=trainval_df, num_users=num_users, fallback=mu_train)
+        item_mean = train_item_mean_predictor(train_df=trainval_df, num_movies=num_movies, fallback=mu_train)
 
         # Rating prediction evaluation.
         y_true = test_df["rating"].to_numpy(dtype=np.float32, copy=False)
@@ -418,7 +423,7 @@ def main() -> None:
         }
 
         # Popularity baseline scores.
-        pop_counts = np.bincount(train_df["movie_index"].to_numpy(dtype=np.int32, copy=False), minlength=num_movies).astype(np.float32)
+        pop_counts = np.bincount(trainval_df["movie_index"].to_numpy(dtype=np.int32, copy=False), minlength=num_movies).astype(np.float32)
         pop_scores = np.log1p(pop_counts).astype(np.float32)
 
         # Genre/tag fallback (user-independent global score).
@@ -426,7 +431,7 @@ def main() -> None:
         global_metadata_scores, genre_tag_profile_score_fn = build_metadata_rankers(
             spec,
             movie_map_df,
-            train_df,
+            trainval_df,
             num_users=num_users,
         )
 
@@ -451,6 +456,7 @@ def main() -> None:
         results = {
             "dataset": key,
             "ks": ks,
+            "training_data": "trainval",
             "rating_metrics": rating_metrics,
             "topn_metrics": topn_metrics,
             "model_artifacts": {
@@ -458,6 +464,7 @@ def main() -> None:
                     "mu_train": mu_train,
                     "lambda_reg": args.lambda_reg,
                     "num_iters": args.num_iters,
+                    "training_data": "trainval",
                     "b_u_path": str(out_dir / "bias_bu.npy"),
                     "b_i_path": str(out_dir / "bias_bi.npy"),
                 },

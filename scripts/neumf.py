@@ -182,6 +182,13 @@ def build_user_rated_mask(ratings_df: pd.DataFrame, num_users: int, num_items: i
     return mask
 
 
+def filter_positive_interactions(ratings_df: pd.DataFrame, *, positive_threshold: float) -> pd.DataFrame:
+    """
+    Keep only interactions that count as positive implicit feedback for NeuMF training.
+    """
+    return ratings_df[ratings_df["rating"] >= float(positive_threshold)].copy()
+
+
 def sample_negatives_for_batch(
     rng: np.random.Generator,
     *,
@@ -224,6 +231,12 @@ def main() -> None:
     parser.add_argument("--embed-dim", type=int, default=32)
     parser.add_argument("--mlp", type=str, default="64,32,16")
     parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument(
+        "--positive-threshold",
+        type=float,
+        default=4.0,
+        help="Minimum explicit rating treated as a positive interaction for NeuMF training.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ks", type=str, default="5,10,20")
     parser.add_argument(
@@ -286,14 +299,25 @@ def main() -> None:
     )
     print(f"[prep] dataset={args.dataset} users={num_users} items={num_items} train_rows={len(train_df)}")
 
-    # Negative sampling protocol consistency:
-    # Build the "user rated" mask only from TRAIN interactions so NeuMF training negatives
-    # match the candidate negatives used in val/test evaluation.
+    train_pos_df = filter_positive_interactions(train_df, positive_threshold=args.positive_threshold)
+    if train_pos_df.empty:
+        raise SystemExit(
+            f"NeuMF positive-threshold={args.positive_threshold} produced 0 training positives for dataset={args.dataset}."
+        )
+    print(
+        f"[prep] dataset={args.dataset} positive_threshold={args.positive_threshold} "
+        f"train_positive_rows={len(train_pos_df)}"
+    )
+
+    # Training negatives avoid any item seen in TRAIN, including low-rated items.
+    # Validation/test candidate negatives still exclude the user's full known history
+    # through the shared ranking evaluation pipeline, so this is a deliberate
+    # train-vs-eval compromise that avoids leakage from held-out interactions.
     rated_mask = build_user_rated_mask(train_df, num_users=num_users, num_items=num_items)
 
-    # Build positive training tensors.
-    u_pos = train_df["user_index"].to_numpy(dtype=np.int32, copy=False)
-    i_pos = train_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
+    # Build positive training tensors from strong-feedback interactions only.
+    u_pos = train_pos_df["user_index"].to_numpy(dtype=np.int32, copy=False)
+    i_pos = train_pos_df["movie_index"].to_numpy(dtype=np.int32, copy=False)
     n_pos = int(u_pos.shape[0])
 
     # Model.
@@ -401,8 +425,10 @@ def main() -> None:
             "embed_dim": args.embed_dim,
             "mlp_layers": mlp_layers,
             "dropout": args.dropout,
+            "positive_threshold": args.positive_threshold,
             "ks": ks,
         },
+        "train_positive_rows": int(len(train_pos_df)),
         "best_epoch_val_ndcg@10": best["epoch"],
         "val_metrics": best["val_metrics"],
         "test_metrics": test_metrics,

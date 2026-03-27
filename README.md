@@ -3,7 +3,7 @@ This repo contains an end-to-end recommender-system experiment on MovieLens `1M`
 
 It loads/unzips the MovieLens archives, standardizes them, builds corrected time-aware per-user train/validation/test splits (`80/10/10`), and evaluates models with an event-based top-N ranking protocol (including full-history negative exclusion).
 
-Models trained and compared include: simple rating/bias baselines, item-item KNN, ALS matrix factorization (main collaborative-filtering model), and an optional NeuMF extension on `1M` only. The trained ALS artifacts are also used by a small CLI to generate recommendations for both existing-user and cold-start scenarios.
+Models trained and compared include: simple rating/bias baselines, item-item KNN, an ALS residual latent-factor model with separately estimated bias terms, and an optional NeuMF extension on `1M` only. The trained ALS artifacts are also used by a small CLI to generate recommendations for both existing-user and cold-start scenarios.
 
 ## Project Overview
 
@@ -63,11 +63,19 @@ make cf-10m-resume
 The current pipeline uses:
 
 - per-user time-ordered `80/10/10` train/validation/test splits
-- full-history negative exclusion by default (`negative_scope=all`)
-- on-the-fly ranking candidate generation instead of giant negative CSVs
+- full-history negative exclusion
+- event-based sampled ranking evaluation
+- final baseline, KNN, and ALS test metrics trained on `train + val`
 - a default cap of `20,000` held-out events per dataset for ranking evaluation
+- NeuMF training positives defined as ratings `>= 4.0`
 
 This cap is a scalability tradeoff: ranking metrics are sampled estimates, not exhaustive full-dataset scores.
+
+## Current Results Snapshot
+
+- KNN is the strongest ranking model on both `1m` and `10m`
+- the regularized `user_movie_bias` baseline is the best RMSE model on both `1m` and `10m`
+- ALS remains the latent-factor model used for exportable CLI artifacts, not the headline ranking winner
 
 ## Outputs
 
@@ -125,7 +133,7 @@ python3 scripts/cli_recommend.py --dataset 10m --ratings "1:5,260:3.5,1193:4" --
 Notes:
 - By default (`--format text`), the CLI prints a compact ranked list: `rank. title | score | genres`.
 - Use `--format json` if you want structured output (including `movieId_raw` when available).
-- For cold-start, the script infers a new user latent vector from the provided `movieId:rating` pairs (then excludes those provided movies from recommendations by default).
+- For cold-start, the script infers a new ALS user vector when enough ratings are provided; otherwise it falls back to a metadata scorer built from genres, popularity, and available tags.
 - For existing users, recommendations exclude movies the user has already rated (by default it excludes from the full processed history via `--exclude-seen-scope all`).
 
 ## Tests
@@ -133,4 +141,3 @@ Notes:
 ```bash
 make test
 ```
-

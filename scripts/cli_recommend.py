@@ -185,6 +185,126 @@ def _load_rated_movies_for_user(history_csv_gz: pathlib.Path, user_index: int, c
     return rated
 
 
+def _scale_unit(x: np.ndarray) -> np.ndarray:
+    x = x.astype(np.float32, copy=False)
+    denom = float(x.max() - x.min())
+    if denom <= 1e-12:
+        return np.zeros_like(x, dtype=np.float32)
+    return ((x - float(x.min())) / denom).astype(np.float32, copy=False)
+
+
+def _should_use_metadata_fallback(num_mapped_ratings: int, min_ratings: int | None) -> bool:
+    if min_ratings is None:
+        return False
+    return int(num_mapped_ratings) < max(1, int(min_ratings))
+
+
+def _load_movie_genre_lists(dataset_key: str, processed_dir: pathlib.Path) -> list[list[str]]:
+    raw_dir = _dataset_raw_dir(dataset_key)
+    movies_path = raw_dir / "movies.dat"
+    movies_df = _read_movielens_dat(
+        movies_path,
+        names=["movieId_raw", "title", "genres"],
+        dtypes={"movieId_raw": np.int32, "title": str, "genres": str},
+    )
+    movie_map = _load_movie_index_map(processed_dir)
+    movies_df = movies_df.merge(movie_map, on="movieId_raw", how="inner")
+
+    num_movies = int(movie_map["movie_index"].max()) + 1
+    genre_lists: list[list[str]] = [[] for _ in range(num_movies)]
+    for _, row in movies_df.iterrows():
+        mi = int(row["movie_index"])
+        genres = str(row["genres"]).split("|") if row["genres"] else []
+        genre_lists[mi] = [g for g in genres if g and g != "(no genres listed)"]
+    return genre_lists
+
+
+def _load_trainval_popularity_scores(processed_dir: pathlib.Path, num_items: int) -> np.ndarray:
+    counts = np.zeros(num_items, dtype=np.float32)
+    for history_name in ("train.csv.gz", "val.csv.gz"):
+        history_path = processed_dir / history_name
+        for chunk in pd.read_csv(
+            history_path,
+            compression="gzip",
+            usecols=["movie_index"],
+            dtype={"movie_index": np.int32},
+            chunksize=200000,
+        ):
+            movie_idx = chunk["movie_index"].to_numpy(dtype=np.int32, copy=False)
+            counts += np.bincount(movie_idx, minlength=num_items).astype(np.float32, copy=False)
+    return np.log1p(counts).astype(np.float32, copy=False)
+
+
+def _load_tag_scores(dataset_key: str, processed_dir: pathlib.Path, num_items: int) -> np.ndarray:
+    tags_path = _dataset_raw_dir(dataset_key) / "tags.dat"
+    if not tags_path.exists():
+        return np.zeros(num_items, dtype=np.float32)
+
+    movie_map = _load_movie_index_map(processed_dir)
+    tags_df = _read_movielens_dat(
+        tags_path,
+        names=["userId_raw", "movieId_raw", "tag", "timestamp"],
+        dtypes={"movieId_raw": np.int32, "userId_raw": np.int32, "tag": str, "timestamp": np.int64},
+    )
+    tag_counts = tags_df.groupby("movieId_raw").size().reset_index(name="tag_count")
+    tag_counts = tag_counts.merge(movie_map, on="movieId_raw", how="inner")
+
+    out = np.zeros(num_items, dtype=np.float32)
+    for _, row in tag_counts.iterrows():
+        out[int(row["movie_index"])] = float(row["tag_count"])
+    return np.log1p(out).astype(np.float32, copy=False)
+
+
+def _build_metadata_fallback_scores(
+    *,
+    dataset_key: str,
+    processed_dir: pathlib.Path,
+    num_items: int,
+    movie_indices: np.ndarray,
+    ratings: np.ndarray,
+) -> np.ndarray:
+    genre_lists = _load_movie_genre_lists(dataset_key, processed_dir)
+    pop_score = _load_trainval_popularity_scores(processed_dir, num_items)
+    tag_score = _load_tag_scores(dataset_key, processed_dir, num_items)
+
+    genre_counts: dict[str, int] = {}
+    movie_genre_weights = np.zeros(num_items, dtype=np.float32)
+    for genres in genre_lists:
+        for genre_name in genres:
+            genre_counts[genre_name] = genre_counts.get(genre_name, 0) + 1
+
+    genre_weight = {genre_name: np.log1p(count) for genre_name, count in genre_counts.items()}
+    for movie_index, genres in enumerate(genre_lists):
+        movie_genre_weights[movie_index] = float(sum(genre_weight.get(genre_name, 0.0) for genre_name in genres))
+
+    pop_scaled = _scale_unit(pop_score)
+    tag_scaled = _scale_unit(tag_score)
+    genre_scaled = _scale_unit(movie_genre_weights)
+    global_composite = (0.6 * pop_scaled + 0.2 * genre_scaled + 0.2 * tag_scaled).astype(np.float32, copy=False)
+
+    profile: dict[str, float] = {}
+    for movie_index, rating in zip(movie_indices, ratings, strict=False):
+        weight = max(float(rating) - 3.0, 0.0)
+        if weight <= 0.0:
+            continue
+        for genre_name in genre_lists[int(movie_index)]:
+            profile[genre_name] = profile.get(genre_name, 0.0) + weight
+
+    if not profile:
+        return global_composite
+
+    profile_norm = float(np.sqrt(sum(weight * weight for weight in profile.values())))
+    if profile_norm <= 1e-12:
+        return global_composite
+
+    genre_pref = np.zeros(num_items, dtype=np.float32)
+    for movie_index, genres in enumerate(genre_lists):
+        genre_pref[movie_index] = float(sum(profile.get(genre_name, 0.0) for genre_name in genres))
+    genre_pref = (genre_pref / profile_norm).astype(np.float32, copy=False)
+
+    return (0.65 * genre_pref + 0.25 * pop_scaled + 0.10 * tag_scaled).astype(np.float32, copy=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Top-N movie recommendations CLI (ALS residual factors).")
     parser.add_argument("--dataset", choices=["1m", "10m"], required=True)
@@ -251,7 +371,7 @@ def main() -> None:
         "--cold-start-min-ratings",
         type=int,
         default=3,
-        help="Print a warning if fewer than this many ratings are provided for cold-start.",
+        help="Below this threshold, cold-start switches from ALS inference to the metadata fallback.",
     )
     args = parser.parse_args()
 
@@ -332,26 +452,36 @@ def main() -> None:
 
         if len(mapped_movie_indices) == 0:
             raise SystemExit("All --new-user-ratings movies were unknown to this dataset.")
-        if args.cold_start_min_ratings is not None and len(mapped_movie_indices) < int(args.cold_start_min_ratings):
-            print(
-                f"[warn] Cold-start has only {len(mapped_movie_indices)} mapped ratings; recommendations may be noisy.",
-                file=sys.stderr,
-            )
 
         mi_arr = np.asarray(mapped_movie_indices, dtype=np.int32)
         r_arr = np.asarray(mapped_ratings, dtype=np.float32)
-        b_u_new, u_new = _estimate_new_user_from_ratings(
-            movie_indices=mi_arr,
-            ratings=r_arr,
-            mu=mu,
-            bias_bi=b_i.astype(np.float32, copy=False),
-            item_factors=item_factors.astype(np.float32, copy=False),
-            cold_start_reg=cold_start_reg,
-        )
+        if _should_use_metadata_fallback(len(mapped_movie_indices), args.cold_start_min_ratings):
+            print(
+                f"[warn] Cold-start has only {len(mapped_movie_indices)} mapped ratings; using metadata fallback.",
+                file=sys.stderr,
+            )
+            cold_start_strategy = "metadata_fallback"
+            pred = _build_metadata_fallback_scores(
+                dataset_key=dataset_key,
+                processed_dir=processed_dir,
+                num_items=num_items,
+                movie_indices=mi_arr,
+                ratings=r_arr,
+            )
+        else:
+            cold_start_strategy = "als_inferred"
+            b_u_new, u_new = _estimate_new_user_from_ratings(
+                movie_indices=mi_arr,
+                ratings=r_arr,
+                mu=mu,
+                bias_bi=b_i.astype(np.float32, copy=False),
+                item_factors=item_factors.astype(np.float32, copy=False),
+                cold_start_reg=cold_start_reg,
+            )
 
-        # Compute ALS residual score for all items for this inferred user.
-        residual_scores = u_new.astype(np.float32, copy=False) @ item_factors.T.astype(np.float32, copy=False)  # (num_items,)
-        pred = mu + float(b_u_new) + b_i.astype(np.float32) + residual_scores
+            # Compute ALS residual score for all items for this inferred user.
+            residual_scores = u_new.astype(np.float32, copy=False) @ item_factors.T.astype(np.float32, copy=False)
+            pred = mu + float(b_u_new) + b_i.astype(np.float32) + residual_scores
 
         # Exclude items rated in the provided cold-start input.
         if args.exclude_rated and exclude_movie_indices:
@@ -422,6 +552,8 @@ def main() -> None:
         }
         if cold_start_mode:
             payload["cold_start_provided_pairs"] = len(parsed)
+            payload["cold_start_mapped_pairs"] = len(mapped_movie_indices)
+            payload["cold_start_strategy"] = cold_start_strategy
         else:
             payload["userId_raw"] = args.user_id
         print(json.dumps(payload, indent=2))
@@ -430,7 +562,7 @@ def main() -> None:
     # Default: compact human-readable text.
     if cold_start_mode:
         # `parsed` + `unknown_movie_ids` are only defined in this branch.
-        header_extra = f"from {len(mapped_movie_indices)} provided ratings"
+        header_extra = f"from {len(mapped_movie_indices)} provided ratings using {cold_start_strategy}"
         if unknown_movie_ids:
             header_extra += f" ({len(unknown_movie_ids)} skipped unknown movieIds)"
         if args.exclude_rated:

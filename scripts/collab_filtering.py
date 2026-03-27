@@ -308,6 +308,7 @@ def train_and_evaluate_spark_als_residual_biases(
     ks: list[int],
     export_artifacts_dir: pathlib.Path | None = None,
     compute_val_metrics: bool = True,
+    compute_test_metrics: bool = True,
 ) -> dict:
     """
     Train Spark ALS on residual ratings:
@@ -347,8 +348,6 @@ def train_and_evaluate_spark_als_residual_biases(
         return spark.createDataFrame(df_pd[["user_index", "movie_index", "rating"]].copy())
 
     train_sdf = _to_spark(train_df, "train")
-    val_sdf = _to_spark(val_df, "val")
-    test_sdf = _to_spark(test_df, "test")
 
     bu_bi_train = train_sdf.join(bu_sdf, on="user_index", how="left").join(bi_sdf, on="movie_index", how="left")
     # residual column
@@ -435,12 +434,18 @@ def train_and_evaluate_spark_als_residual_biases(
     else:
         rmse_val, mae_val = None, None
 
-    test_pred_pairs = test_df[["user_index", "movie_index"]].copy()
-    test_pred = _predict_pairs(test_pred_pairs, "test_pred")
-    test_pred = test_pred.merge(test_df[["user_index", "movie_index", "rating"]], on=["user_index", "movie_index"], how="inner")
-    rmse_test, mae_test = _rmse_mae(test_pred["rating"].to_numpy(dtype=np.float32), test_pred["rating_pred"].to_numpy(dtype=np.float32))
+    if compute_test_metrics:
+        test_pred_pairs = test_df[["user_index", "movie_index"]].copy()
+        test_pred = _predict_pairs(test_pred_pairs, "test_pred")
+        test_pred = test_pred.merge(test_df[["user_index", "movie_index", "rating"]], on=["user_index", "movie_index"], how="inner")
+        rmse_test, mae_test = _rmse_mae(
+            test_pred["rating"].to_numpy(dtype=np.float32),
+            test_pred["rating_pred"].to_numpy(dtype=np.float32),
+        )
+    else:
+        rmse_test, mae_test = None, None
 
-    # Ranking evaluation on val_negs and test_negs using candidate sets.
+    # Ranking evaluation on val/test candidate sets.
     # IMPORTANT: Do this fully in Spark to avoid driver OOM from collecting millions of predictions.
     from pyspark.sql.window import Window
 
@@ -510,8 +515,10 @@ def train_and_evaluate_spark_als_residual_biases(
         val_rank_metrics = None
         ndcg_at_k_10 = None
 
-    # Test metrics
-    test_rank_metrics = _ranking_metrics_spark(test_events_df, test_negs_df)
+    if compute_test_metrics:
+        test_rank_metrics = _ranking_metrics_spark(test_events_df, test_negs_df)
+    else:
+        test_rank_metrics = None
 
     return {
         "rank": rank,
@@ -519,7 +526,7 @@ def train_and_evaluate_spark_als_residual_biases(
         "max_iter": max_iter,
         "bias_lambda": bias_lambda,
         "val_rating": None if rmse_val is None else {"rmse": rmse_val, "mae": mae_val},
-        "test_rating": {"rmse": rmse_test, "mae": mae_test},
+        "test_rating": None if rmse_test is None else {"rmse": rmse_test, "mae": mae_test},
         "val_ranking": val_rank_metrics,
         "test_ranking": test_rank_metrics,
         "val_ndcg@10": ndcg_at_k_10,
@@ -745,6 +752,7 @@ def main() -> None:
                 "neighbor_k": int(knn_best["neigh_k"]),
                 "tuning_val_ranking": knn_best["val_metrics"],
                 "test_ranking": knn_test_metrics,
+                "training_data": "trainval",
                 "test_rating": {"rmse": rmse_knn, "mae": mae_knn},
                 "ranking_eval": {"val": val_eval_summary, "test": test_eval_summary},
             }
@@ -775,6 +783,7 @@ def main() -> None:
                         num_item_blocks=als_item_blocks,
                         seed=args.seed,
                         ks=ks,
+                        compute_test_metrics=False,
                     )
                     ndcg10 = float(out.get("val_ndcg@10", 0.0))
                     print(f"[als] {key}: rank={rank} reg={reg} val_ndcg@10={ndcg10:.6f}")
@@ -818,10 +827,12 @@ def main() -> None:
                 ks=ks,
                 export_artifacts_dir=export_dir,
                 compute_val_metrics=False,
+                compute_test_metrics=True,
             )
             progress["als_results"] = {
                 "best_rank": int(als_best["rank"]),
                 "best_reg_param": float(als_best["reg"]),
+                "training_data": "trainval",
                 "tuning_val_ranking": als_best.get("val_ranking"),
                 "tuning_val_rating": als_best.get("val_rating"),
                 "test_ranking": final_out["test_ranking"],

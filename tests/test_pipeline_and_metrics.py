@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from scripts import baselines, prepare_data
+from scripts import baselines, cli_recommend, neumf, prepare_data, ranking_eval
 
 
 class PipelineAndMetricsTests(unittest.TestCase):
@@ -67,6 +67,47 @@ class PipelineAndMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(metrics["recall@1"], 0.5)
         self.assertAlmostEqual(metrics["precision@1"], 0.5)
         self.assertAlmostEqual(metrics["recall@3"], 1.0)
+
+    def test_build_candidate_groups_excludes_full_known_history(self):
+        split_df = pd.DataFrame({"user_index": [0], "movie_index": [2]})
+        rated_source_df = pd.DataFrame(
+            {
+                "user_index": [0, 0, 0],
+                "movie_index": [0, 1, 2],
+            }
+        )
+
+        _events_df, negs_df, _summary = ranking_eval.build_candidate_groups(
+            split_df=split_df,
+            rated_source_df=rated_source_df,
+            num_movies=6,
+            num_negatives=3,
+            seed=7,
+            max_events=None,
+        )
+
+        self.assertEqual(len(negs_df), 3)
+        self.assertTrue(set(negs_df["neg_movie_index"].tolist()).issubset({3, 4, 5}))
+
+    def test_sparse_cold_start_switches_to_metadata_fallback(self):
+        self.assertTrue(cli_recommend._should_use_metadata_fallback(2, 3))
+        self.assertFalse(cli_recommend._should_use_metadata_fallback(3, 3))
+        self.assertFalse(cli_recommend._should_use_metadata_fallback(2, None))
+
+    def test_neumf_filters_training_positives_by_threshold(self):
+        ratings_df = pd.DataFrame(
+            {
+                "user_index": [0, 0, 1, 1],
+                "movie_index": [10, 11, 12, 13],
+                "rating": [5.0, 3.5, 4.0, 2.0],
+                "timestamp": [1, 2, 3, 4],
+            }
+        )
+
+        positives = neumf.filter_positive_interactions(ratings_df, positive_threshold=4.0)
+
+        self.assertEqual(positives["movie_index"].tolist(), [10, 12])
+        self.assertTrue((positives["rating"] >= 4.0).all())
 
 
 if __name__ == "__main__":

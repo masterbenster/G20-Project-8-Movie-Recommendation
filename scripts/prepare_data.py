@@ -1,7 +1,6 @@
 import argparse
 import gzip
 import json
-import os
 import pathlib
 from dataclasses import dataclass
 
@@ -137,8 +136,7 @@ def _write_gz_csv(df: pd.DataFrame, out_path: pathlib.Path) -> None:
 
 
 def prepare_dataset(spec: DatasetSpec, num_negatives: int, seed: int) -> None:
-    # Backward-compatible wrapper: original behavior excluded all previously-seen items.
-    prepare_dataset_with_negative_scope(spec, num_negatives=num_negatives, seed=seed, negative_scope="all")
+    prepare_dataset_fixed_negative_policy(spec, num_negatives=num_negatives, seed=seed)
 
 
 def _validate_split_outputs(
@@ -200,12 +198,10 @@ def _validate_split_outputs(
     return summary
 
 
-def prepare_dataset_with_negative_scope(
+def prepare_dataset_fixed_negative_policy(
     spec: DatasetSpec,
     num_negatives: int,
     seed: int,
-    *,
-    negative_scope: str,
 ) -> None:
     out_dir = PROCESSED_DIR / spec.key
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -269,7 +265,6 @@ def prepare_dataset_with_negative_scope(
         "dataset": spec.key,
         "seed": seed,
         "num_negatives": num_negatives,
-        "negative_scope": negative_scope,
         "num_users": num_users,
         "num_movies": num_movies,
         "num_ratings_clean": int(len(ratings_clean_out)),
@@ -279,7 +274,7 @@ def prepare_dataset_with_negative_scope(
         "num_val_events": int(len(val_df)),
         "num_test_events": int(len(test_df)),
         "ranking_eval": {
-            "negative_scope": negative_scope,
+            "rated_history_scope": "all",
             "num_negatives": int(num_negatives),
             "materialized_candidate_files": False,
             "default_max_events": {"1m": 20000, "10m": 20000},
@@ -295,7 +290,8 @@ def prepare_dataset_with_negative_scope(
         "validation": validation_summary,
         "note": (
             "Time-aware per-user 80/10/10 split after dedup by latest (userId,movieId). "
-            "Ranking negatives are generated on the fly during evaluation."
+            "Ranking negatives are generated on the fly during evaluation and exclude the "
+            "user's full known history."
         ),
     }
     with open(out_dir / "meta.json", "w") as f:
@@ -307,12 +303,6 @@ def main() -> None:
     parser.add_argument("--dataset", choices=["1m", "10m", "both"], default="both")
     parser.add_argument("--num-negatives", type=int, default=99)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument(
-        "--negative-scope",
-        choices=["all", "train_only"],
-        default="all",
-        help="Recorded ranking-eval policy. Candidate negatives are generated on the fly during evaluation.",
-    )
     parser.add_argument("--skip-existing", action="store_true", help="Skip if meta.json exists for dataset.")
     args = parser.parse_args()
 
@@ -343,11 +333,10 @@ def main() -> None:
             continue
 
         print(f"[prep] {spec.key}: reading raw ratings and building corrected splits...")
-        prepare_dataset_with_negative_scope(
+        prepare_dataset_fixed_negative_policy(
             spec,
             num_negatives=args.num_negatives,
             seed=args.seed,
-            negative_scope=args.negative_scope,
         )
         print(f"[done] {spec.key}: outputs written to {out_dir}")
 
