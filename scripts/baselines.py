@@ -33,6 +33,13 @@ def _rmse_mae(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
     return rmse, mae
 
 
+def build_final_train_df(train_df: pd.DataFrame, val_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Final baseline evaluation uses train+val after validation-time model selection.
+    """
+    return pd.concat([train_df, val_df], ignore_index=True)
+
+
 def train_user_movie_bias(
     train_df: pd.DataFrame,
     num_users: int,
@@ -378,7 +385,7 @@ def main() -> None:
             dtypes={"user_index": np.int32, "movie_index": np.int32, "rating": np.float32, "timestamp": np.int64},
         )
         movie_map_df = pd.read_csv(processed_dir / "movie_map.csv")
-        trainval_df = pd.concat([train_df, val_df], ignore_index=True)
+        trainval_df = build_final_train_df(train_df, val_df)
         max_ranking_events = default_max_ranking_events(key) if args.max_ranking_events is None else args.max_ranking_events
         test_events_df, test_negs_df, ranking_eval_summary = build_candidate_groups(
             split_df=test_df,

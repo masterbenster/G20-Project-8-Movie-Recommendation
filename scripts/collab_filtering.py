@@ -28,6 +28,17 @@ def _rmse_mae(y_true: np.ndarray, y_pred: np.ndarray) -> tuple[float, float]:
     return rmse, mae
 
 
+def stage_compute_test_metrics(stage: str) -> bool:
+    """
+    Test metrics must stay disabled during ALS tuning and enabled only for final evaluation.
+    """
+    if stage == "als_tune":
+        return False
+    if stage == "als_final":
+        return True
+    raise ValueError(f"Unsupported ALS stage for test-metric policy: {stage}")
+
+
 def _metrics_from_scores_onepos(
     event_ids: np.ndarray,
     pos_movie_indices: np.ndarray,
@@ -783,7 +794,7 @@ def main() -> None:
                         num_item_blocks=als_item_blocks,
                         seed=args.seed,
                         ks=ks,
-                        compute_test_metrics=False,
+                        compute_test_metrics=stage_compute_test_metrics("als_tune"),
                     )
                     ndcg10 = float(out.get("val_ndcg@10", 0.0))
                     print(f"[als] {key}: rank={rank} reg={reg} val_ndcg@10={ndcg10:.6f}")
@@ -827,7 +838,7 @@ def main() -> None:
                 ks=ks,
                 export_artifacts_dir=export_dir,
                 compute_val_metrics=False,
-                compute_test_metrics=True,
+                compute_test_metrics=stage_compute_test_metrics("als_final"),
             )
             progress["als_results"] = {
                 "best_rank": int(als_best["rank"]),

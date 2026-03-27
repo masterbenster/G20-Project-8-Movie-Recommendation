@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from scripts import baselines, cli_recommend, neumf, prepare_data, ranking_eval
+from scripts import baselines, cli_recommend, collab_filtering, neumf, prepare_data, ranking_eval
 
 
 class PipelineAndMetricsTests(unittest.TestCase):
@@ -93,6 +93,21 @@ class PipelineAndMetricsTests(unittest.TestCase):
         self.assertTrue(cli_recommend._should_use_metadata_fallback(2, 3))
         self.assertFalse(cli_recommend._should_use_metadata_fallback(3, 3))
         self.assertFalse(cli_recommend._should_use_metadata_fallback(2, None))
+
+    def test_baselines_final_training_uses_train_plus_val(self):
+        train_df = pd.DataFrame({"user_index": [0, 1], "movie_index": [10, 11], "rating": [4.0, 3.5]})
+        val_df = pd.DataFrame({"user_index": [2], "movie_index": [12], "rating": [5.0]})
+
+        trainval_df = baselines.build_final_train_df(train_df, val_df)
+
+        self.assertEqual(len(trainval_df), 3)
+        self.assertEqual(trainval_df["movie_index"].tolist(), [10, 11, 12])
+
+    def test_als_stage_test_metric_policy(self):
+        self.assertFalse(collab_filtering.stage_compute_test_metrics("als_tune"))
+        self.assertTrue(collab_filtering.stage_compute_test_metrics("als_final"))
+        with self.assertRaisesRegex(ValueError, "Unsupported ALS stage"):
+            collab_filtering.stage_compute_test_metrics("knn_tune")
 
     def test_neumf_filters_training_positives_by_threshold(self):
         ratings_df = pd.DataFrame(
