@@ -73,7 +73,7 @@ class NeuMFNet(nn.Module):
         mlp = []
         in_dim = emb_dim * 2
         for out_dim in layers:
-            mlp += [nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(0.2)]
+            mlp += [nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(0.1)]
             in_dim = out_dim
         
         self.mlp = nn.Sequential(*mlp)
@@ -88,7 +88,7 @@ class NeuMFNet(nn.Module):
 
 
 class NeuMFModel:
-    def __init__(self, emb_dim=64, layers=[128,64,32], epochs=50, lr=0.001, batch_size=2048):
+    def __init__(self, emb_dim=64, layers=[128,64,32], epochs=50, lr=0.0005, batch_size=4096):
         self.emb_dim    = emb_dim
         self.layers     = layers
         self.epochs     = epochs
@@ -104,6 +104,7 @@ class NeuMFModel:
         self.net = NeuMFNet(self.n_users, self.n_items, self.emb_dim, self.layers).to(self.device)
        
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
         
         criterion = nn.MSELoss()
 
@@ -120,7 +121,10 @@ class NeuMFModel:
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            print(f"  Epoch {epoch+1}/{self.epochs} - Loss: {total_loss/len(loader):.4f}")
+            
+            current_lr = scheduler.get_last_lr()[0]
+            print(f"  Epoch {epoch+1}/{self.epochs} - Loss: {total_loss/len(loader):.4f} - LR: {current_lr:.6f}")
+            scheduler.step()
 
     def predict(self, df):
         self.net.eval()
