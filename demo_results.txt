@@ -1,0 +1,374 @@
+========================================
+  USER 42
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'als'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/als.joblib
+
+Top 5 recommendations for User 42 (ALS):
+   1. Modulations (1998)  (score: 5.0)
+   2. Gate of Heavenly Peace, The (1995)  (score: 5.0)
+   3. Song of Freedom (1936)  (score: 5.0)
+   4. One Little Indian (1973)  (score: 5.0)
+   5. Feast of July (1995)  (score: 5.0)
+
+Why these recommendations (ALS):
+
+   1. Modulations (1998)
+        - Powder (1995) (5.0★)
+        - Heat (1995) (4.0★)
+        - One Flew Over the Cuckoo's Nest (1975) (3.0★)
+
+   2. Gate of Heavenly Peace, The (1995)
+        - Free Enterprise (1998) (4.0★)
+        - 7th Voyage of Sinbad, The (1958) (3.0★)
+        - Coneheads (1993) (3.0★)
+
+   3. Song of Freedom (1936)
+        - Communion (1989) (4.0★)
+        - Lord of the Rings, The (1978) (4.0★)
+        - Big Trouble in Little China (1986) (4.0★)
+
+   4. One Little Indian (1973)
+        - Dreamscape (1984) (4.0★)
+        - Alien Nation (1988) (3.0★)
+        - Arrival, The (1996) (3.0★)
+
+   5. Feast of July (1995)
+        - 2001: A Space Odyssey (1968) (5.0★)
+        - X-Files: Fight the Future, The (1998) (3.0★)
+        - Pi (1998) (3.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'knn'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/knn.joblib
+
+Top 5 recommendations for User 42 (KNN):
+   1. Feast of July (1995)  (score: 5.0)
+   2. One Little Indian (1973)  (score: 5.0)
+   3. Follow the Bitch (1998)  (score: 5.0)
+   4. Song of Freedom (1936)  (score: 5.0)
+   5. I Am Cuba (Soy Cuba/Ya Kuba) (1964)  (score: 5.0)
+
+Why these recommendations (KNN):
+
+   1. Feast of July (1995)
+        - Sneakers (1992) (4.0★)
+        - Twelve Monkeys (1995) (3.0★)
+        - 2001: A Space Odyssey (1968) (5.0★)
+
+   2. One Little Indian (1973)
+        - 2010 (1984) (5.0★)
+        - African Queen, The (1951) (4.0★)
+        - Highlander (1986) (4.0★)
+
+   3. Follow the Bitch (1998)
+        - Airport (1970) (4.0★)
+        - Air Force One (1997) (3.0★)
+        - Aliens (1986) (5.0★)
+
+   4. Song of Freedom (1936)
+
+   5. I Am Cuba (Soy Cuba/Ya Kuba) (1964)
+        - Mission: Impossible 2 (2000) (3.0★)
+        - Ladyhawke (1985) (4.0★)
+        - Star Trek: Generations (1994) (4.0★)
+
+----------------------------------------
+  Model: NEUMF  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'neumf'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/neumf.joblib
+
+Top 5 recommendations for User 42 (NEUMF):
+   1. Starship Troopers (1997)  (score: 0.977)
+   2. Universal Soldier (1992)  (score: 0.967)
+   3. Batman (1989)  (score: 0.961)
+   4. Alien: Resurrection (1997)  (score: 0.957)
+   5. Who Framed Roger Rabbit? (1988)  (score: 0.954)
+
+Why these recommendations (NEUMF):
+
+   1. Starship Troopers (1997)
+        - Aliens (1986) (5.0★)
+        - Powder (1995) (5.0★)
+        - Westworld (1973) (5.0★)
+
+   2. Universal Soldier (1992)
+        - Tron (1982) (5.0★)
+        - Jackie Chan's First Strike (1996) (5.0★)
+        - Mad Max (1979) (5.0★)
+
+   3. Batman (1989)
+        - Jaws (1975) (5.0★)
+        - Moonraker (1979) (5.0★)
+        - Planet of the Apes (1968) (5.0★)
+
+   4. Alien: Resurrection (1997)
+        - Barb Wire (1996) (3.0★)
+        - Dark Crystal, The (1982) (3.0★)
+        - Face/Off (1997) (3.0★)
+
+   5. Who Framed Roger Rabbit? (1988)
+        - Mask, The (1994) (3.0★)
+        - Dragonheart (1996) (3.0★)
+        - Poseidon Adventure, The (1972) (3.0★)
+
+========================================
+  USER 150
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'als'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/als.joblib
+
+Top 5 recommendations for User 150 (ALS):
+   1. Lamerica (1994)  (score: 5.0)
+   2. Dry Cleaning (Nettoyage à sec) (1997)  (score: 5.0)
+   3. Apple, The (Sib) (1998)  (score: 5.0)
+   4. Modulations (1998)  (score: 5.0)
+   5. Hour of the Pig, The (1993)  (score: 5.0)
+
+Why these recommendations (ALS):
+
+   1. Lamerica (1994)
+        - Raise the Red Lantern (1991) (4.0★)
+        - Fight Club (1999) (5.0★)
+        - Farewell My Concubine (1993) (4.0★)
+
+   2. Dry Cleaning (Nettoyage à sec) (1997)
+        - Three Kings (1999) (4.0★)
+        - South Park: Bigger, Longer and Uncut (1999) (4.0★)
+        - There's Something About Mary (1998) (5.0★)
+
+   3. Apple, The (Sib) (1998)
+        - Psycho (1960) (4.0★)
+        - 2001: A Space Odyssey (1968) (5.0★)
+        - Rosemary's Baby (1968) (4.0★)
+
+   4. Modulations (1998)
+        - Dazed and Confused (1993) (4.0★)
+        - Powder (1995) (4.0★)
+        - Pecker (1998) (4.0★)
+
+   5. Hour of the Pig, The (1993)
+        - Kids in the Hall: Brain Candy (1996) (3.0★)
+        - Best in Show (2000) (4.0★)
+        - Hanging Garden, The (1997) (4.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'knn'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/knn.joblib
+
+Top 5 recommendations for User 150 (KNN):
+   1. Modulations (1998)  (score: 5.0)
+   2. Ulysses (Ulisse) (1954)  (score: 5.0)
+   3. Smashing Time (1967)  (score: 5.0)
+   4. Skipped Parts (2000)  (score: 5.0)
+   5. Feast of July (1995)  (score: 5.0)
+
+Why these recommendations (KNN):
+
+   1. Modulations (1998)
+        - Pecker (1998) (4.0★)
+        - Dazed and Confused (1993) (4.0★)
+        - Crumb (1994) (2.0★)
+
+   2. Ulysses (Ulisse) (1954)
+        - Shawshank Redemption, The (1994) (5.0★)
+        - 2001: A Space Odyssey (1968) (5.0★)
+        - Jaws (1975) (4.0★)
+
+   3. Smashing Time (1967)
+        - Right Stuff, The (1983) (5.0★)
+        - Howards End (1992) (4.0★)
+        - Raiders of the Lost Ark (1981) (4.0★)
+
+   4. Skipped Parts (2000)
+        - Best in Show (2000) (4.0★)
+        - Talented Mr. Ripley, The (1999) (4.0★)
+        - Sixth Sense, The (1999) (4.0★)
+
+   5. Feast of July (1995)
+        - Hanging Garden, The (1997) (4.0★)
+        - Pillow Book, The (1995) (5.0★)
+        - Priest (1994) (4.0★)
+
+----------------------------------------
+  Model: NEUMF  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'neumf'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/neumf.joblib
+
+Top 5 recommendations for User 150 (NEUMF):
+   1. Clueless (1995)  (score: 0.963)
+   2. Good Will Hunting (1997)  (score: 0.948)
+   3. Birds, The (1963)  (score: 0.94)
+   4. Wizard of Oz, The (1939)  (score: 0.936)
+   5. Braveheart (1995)  (score: 0.932)
+
+Why these recommendations (NEUMF):
+
+   1. Clueless (1995)
+        - Awakenings (1990) (5.0★)
+        - Ice Storm, The (1997) (2.0★)
+        - All That Jazz (1979) (5.0★)
+
+   2. Good Will Hunting (1997)
+        - Sound of Music, The (1965) (5.0★)
+        - Dances with Wolves (1990) (5.0★)
+        - Silence of the Lambs, The (1991) (5.0★)
+
+   3. Birds, The (1963)
+        - Pulp Fiction (1994) (5.0★)
+        - Joy Luck Club, The (1993) (5.0★)
+        - Full Monty, The (1997) (5.0★)
+
+   4. Wizard of Oz, The (1939)
+        - Midnight Express (1978) (5.0★)
+        - Frequency (2000) (3.0★)
+        - Romy and Michele's High School Reunion (1997) (3.0★)
+
+   5. Braveheart (1995)
+        - Rushmore (1998) (3.0★)
+        - Magnolia (1999) (3.0★)
+        - Erin Brockovich (2000) (3.0★)
+
+========================================
+  USER 1000
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 1000  |  Top 5
+----------------------------------------
+Loading data and model 'als'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/als.joblib
+
+Top 5 recommendations for User 1000 (ALS):
+   1. Usual Suspects, The (1995)  (score: 5.0)
+   2. Lamerica (1994)  (score: 5.0)
+   3. Specials, The (2000)  (score: 5.0)
+   4. Skipped Parts (2000)  (score: 5.0)
+   5. One Little Indian (1973)  (score: 5.0)
+
+Why these recommendations (ALS):
+
+   1. Usual Suspects, The (1995)
+        - Mariachi, El (1992) (4.0★)
+        - Hunt for Red October, The (1990) (5.0★)
+        - Yellow Submarine (1968) (5.0★)
+
+   2. Lamerica (1994)
+        - Thelma & Louise (1991) (5.0★)
+        - King Kong (1933) (3.0★)
+        - Winnie the Pooh and the Blustery Day (1968) (5.0★)
+
+   3. Specials, The (2000)
+        - Fantasia (1940) (4.0★)
+        - Boat, The (Das Boot) (1981) (5.0★)
+        - Charlotte's Web (1973) (3.0★)
+
+   4. Skipped Parts (2000)
+        - 7th Voyage of Sinbad, The (1958) (2.0★)
+        - Lady and the Tramp (1955) (4.0★)
+        - South Park: Bigger, Longer and Uncut (1999) (4.0★)
+
+   5. One Little Indian (1973)
+        - Full Metal Jacket (1987) (3.0★)
+        - Matrix, The (1999) (5.0★)
+        - Godfather: Part II, The (1974) (4.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 1000  |  Top 5
+----------------------------------------
+Loading data and model 'knn'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/knn.joblib
+
+Top 5 recommendations for User 1000 (KNN):
+   1. Institute Benjamenta, or This Dream People Call Human Life (1995)  (score: 5.0)
+   2. Gate of Heavenly Peace, The (1995)  (score: 5.0)
+   3. Hour of the Pig, The (1993)  (score: 5.0)
+   4. Modulations (1998)  (score: 5.0)
+   5. Dry Cleaning (Nettoyage à sec) (1997)  (score: 5.0)
+
+Why these recommendations (KNN):
+
+   1. Institute Benjamenta, or This Dream People Call Human Life (1995)
+        - Boat, The (Das Boot) (1981) (5.0★)
+        - Terminator 2: Judgment Day (1991) (5.0★)
+        - Total Recall (1990) (4.0★)
+
+   2. Gate of Heavenly Peace, The (1995)
+        - X-Men (2000) (4.0★)
+        - Untouchables, The (1987) (5.0★)
+        - Chicken Run (2000) (4.0★)
+
+   3. Hour of the Pig, The (1993)
+        - South Park: Bigger, Longer and Uncut (1999) (4.0★)
+        - Star Wars: Episode IV - A New Hope (1977) (5.0★)
+        - Star Wars: Episode VI - Return of the Jedi (1983) (5.0★)
+
+   4. Modulations (1998)
+        - Thelma & Louise (1991) (5.0★)
+        - Fugitive, The (1993) (5.0★)
+
+   5. Dry Cleaning (Nettoyage à sec) (1997)
+
+----------------------------------------
+  Model: NEUMF  |  User: 1000  |  Top 5
+----------------------------------------
+Loading data and model 'neumf'...
+  Loading cached splits from DATA/ml-1m
+  Loaded weights from CODE/weights/neumf.joblib
+
+Top 5 recommendations for User 1000 (NEUMF):
+   1. Star Wars: Episode I - The Phantom Menace (1999)  (score: 0.981)
+   2. Men in Black (1997)  (score: 0.979)
+   3. Mask of Zorro, The (1998)  (score: 0.976)
+   4. Abyss, The (1989)  (score: 0.965)
+   5. Saving Private Ryan (1998)  (score: 0.958)
+
+Why these recommendations (NEUMF):
+
+   1. Star Wars: Episode I - The Phantom Menace (1999)
+        - Star Wars: Episode IV - A New Hope (1977) (5.0★)
+        - Excalibur (1981) (2.0★)
+        - 7th Voyage of Sinbad, The (1958) (2.0★)
+
+   2. Men in Black (1997)
+        - Desperado (1995) (3.0★)
+        - Verdict, The (1982) (5.0★)
+        - Raiders of the Lost Ark (1981) (5.0★)
+
+   3. Mask of Zorro, The (1998)
+        - Beauty and the Beast (1991) (5.0★)
+        - Bug's Life, A (1998) (5.0★)
+        - Night to Remember, A (1958) (5.0★)
+
+   4. Abyss, The (1989)
+        - Thelma & Louise (1991) (5.0★)
+        - Fugitive, The (1993) (5.0★)
+        - Yellow Submarine (1968) (5.0★)
+
+   5. Saving Private Ryan (1998)
+        - Jurassic Park (1993) (4.0★)
+        - South Park: Bigger, Longer and Uncut (1999) (4.0★)
+        - Tarzan (1999) (4.0★)
+
