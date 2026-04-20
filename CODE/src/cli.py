@@ -1,4 +1,5 @@
-import os
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import argparse
@@ -7,8 +8,11 @@ import pandas as pd
 import numpy as np
 from src.data import load_1m, load_splits, save_splits, time_split
 
-def get_recommendations(model, user_idx, train, movies, n=10):
-    seen = set(train[train["user_idx"] == user_idx]["item_idx"].values)
+def get_recommendations(model, user_idx, train, movies, n=10, all_ratings=None):
+    # Exclude everything the user has ever rated, not just their training items
+    ratings_ref = all_ratings if all_ratings is not None else train
+    seen = set(ratings_ref[ratings_ref["user_idx"] == user_idx]["item_idx"].values)
+
     all_items = np.arange(train["item_idx"].max() + 1)
     candidates = np.array([i for i in all_items if i not in seen])
 
@@ -16,13 +20,6 @@ def get_recommendations(model, user_idx, train, movies, n=10):
     scores  = model.predict(df_cand)
     top_idx = candidates[np.argsort(scores)[::-1][:n]]
 
-    # Map item_idx back to movieId
-    idx_to_movie = dict(zip(
-        train["item_idx"].astype("category").cat.codes if False else
-        pd.Categorical(train["movieId"]).codes,
-        train["movieId"]
-    ))
-    # Simpler: build from train directly
     item_to_movieid = train.drop_duplicates("item_idx").set_index("item_idx")["movieId"].to_dict()
 
     results = []
@@ -43,9 +40,17 @@ def main():
     parser.add_argument("--topn",  type=int, default=10, help="Number of recommendations")
     args = parser.parse_args()
 
-    print(f"Loading data and model '{args.model}'...")
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
+    import joblib
+    data_dir    = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
+    weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights")
     dataset_dir = os.path.join(data_dir, "ml-1m")
+
+    weight_path = os.path.join(weights_dir, f"{args.model}.joblib")
+    if not os.path.exists(weight_path):
+        print(f"No saved weights found at {weight_path}. Run CODE/train.py first.")
+        return
+
+    print(f"Loading data and model '{args.model}'...")
     ratings, movies, users = load_1m(path=dataset_dir)
 
     cached = load_splits(dataset_dir)
@@ -55,18 +60,8 @@ def main():
         train, val, test = time_split(ratings)
         save_splits(train, val, test, dataset_dir)
 
-    if args.model == "als":
-        from src.als import ALSModel
-        model = ALSModel(factors=50, iterations=20, regularization=0.1)
-        model.fit(train)
-    elif args.model == "knn":
-        from src.knn import ItemKNN
-        model = ItemKNN(k=20)
-        model.fit(train)
-    elif args.model == "neumf":
-        from src.neumf import NeuMFModel
-        model = NeuMFModel(epochs=10)
-        model.fit(train)
+    model = joblib.load(weight_path)
+    print(f"  Loaded weights from {os.path.relpath(os.path.abspath(weight_path))}")
 
     # Map public userId to internal user_idx
     user_map = train.drop_duplicates("userId").set_index("userId")["user_idx"].to_dict()
@@ -75,11 +70,10 @@ def main():
         return
 
     user_idx = user_map[args.user]
-    recs = get_recommendations(model, user_idx, train, movies, n=args.topn)
+    recs = get_recommendations(model, user_idx, train, movies, n=args.topn, all_ratings=ratings)
 
-    # NeuMF can explain each recommendation via GMF embedding similarity
     explanations = None
-    if args.model == "neumf" and hasattr(model, "explain"):
+    if hasattr(model, "explain"):
         title_to_idx = (train.drop_duplicates("item_idx")
                              .merge(movies, on="movieId")[["title", "item_idx"]]
                              .set_index("title")["item_idx"].to_dict())
@@ -90,8 +84,13 @@ def main():
     print(f"\nTop {args.topn} recommendations for User {args.user} ({args.model.upper()}):")
     for i, (title, score) in enumerate(recs, 1):
         print(f"  {i:2}. {title}  (score: {score})")
-        if explanations:
-            print(f"       {explanations[i-1]}")
+
+    if explanations:
+        print(f"\nWhy these recommendations ({args.model.upper()}):")
+        for i, ((title, _), reasons) in enumerate(zip(recs, explanations), 1):
+            print(f"\n  {i:2}. {title}")
+            for reason_title, rating in reasons:
+                print(f"        - {reason_title} ({rating:.1f}★)")
 
 
 if __name__ == "__main__":
