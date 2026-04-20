@@ -4,6 +4,24 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 
+
+def _select_device():
+    if torch.cuda.is_available():
+        dev = torch.device("cuda")
+        print(f"  NeuMF: using GPU (CUDA - {torch.cuda.get_device_name(0)})")
+    elif torch.backends.mps.is_available():
+        dev = torch.device("mps")
+        print("  NeuMF: using GPU (MPS - Apple Silicon)")
+    else:
+        try:
+            import torch_directml
+            dev = torch_directml.device()
+            print(f"  NeuMF: using GPU (DirectML - {torch_directml.device_name(torch_directml.default_device())})")
+        except ImportError:
+            dev = torch.device("cpu")
+            print("  NeuMF: using CPU")
+    return dev
+
 class RatingsDataset(Dataset):
     def __init__(self, df):
         self.users  = torch.tensor(df["user_idx"].values, dtype=torch.long)
@@ -43,7 +61,7 @@ class NeuMFModel:
         self.epochs     = epochs
         self.lr         = lr
         self.batch_size = batch_size
-        self.device     = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = _select_device()
 
     def fit(self, train):
         self.mu        = train["rating"].mean()
@@ -79,5 +97,5 @@ class NeuMFModel:
         i = i.clamp(0, self.n_items - 1)
 
         with torch.no_grad():
-            preds = self.net(u, i).cpu().numpy()
+            preds = self.net(u, i).detach().cpu().numpy()
         return preds.clip(0.5, 5.0)

@@ -3,11 +3,22 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 import implicit
 import numpy as np
+import torch
 from scipy.sparse import csr_matrix
+
+def _als_class():
+    if torch.cuda.is_available():
+        try:
+            print("  ALS: using GPU (CUDA)")
+            return implicit.gpu.als.AlternatingLeastSquares
+        except AttributeError:
+            pass
+    print("  ALS: using CPU")
+    return implicit.cpu.als.AlternatingLeastSquares
 
 class ALSModel:
     def __init__(self, factors=50, iterations=20, regularization=0.1):
-        self.model = implicit.cpu.als.AlternatingLeastSquares(
+        self.model = _als_class()(
             factors=factors,
             iterations=iterations,
             regularization=regularization

@@ -44,7 +44,8 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading data and model '{args.model}'...")
-    ratings, movies, users = load_1m()
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
+    ratings, movies, users = load_1m(path=os.path.join(data_dir, "ml-1m"))
 
     from src.data import time_split
     train, val, test = time_split(ratings)
