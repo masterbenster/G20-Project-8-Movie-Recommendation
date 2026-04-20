@@ -60,3 +60,40 @@ class ItemKNN:
                 preds.append(self.mu + ub + ib + np.dot(w, r) / w.sum())
 
         return np.array(preds).clip(0.5, 5.0)
+
+    def explain(self, user_idx, recommended_item_idxs, train, movies, top_k=3):
+        idx_to_movieid = train.drop_duplicates("item_idx").set_index("item_idx")["movieId"].to_dict()
+        item_to_title  = movies.drop_duplicates("movieId").set_index("movieId")["title"].to_dict()
+
+        user_ratings = (train[train["user_idx"] == user_idx]
+                        .sort_values("rating", ascending=False))
+        actual_ratings = {int(r["item_idx"]): r["rating"]
+                          for _, r in user_ratings.iterrows()}
+        user_items = self.R[user_idx].toarray().flatten()
+
+        if user_items.sum() == 0:
+            return [[] for _ in recommended_item_idxs]
+
+        explanations = []
+        used_indices = set()
+        for item_idx in recommended_item_idxs:
+            sim_row = self.sim[item_idx].toarray().flatten()
+            sim_row[item_idx] = 0
+            # Only consider items this user has rated
+            sim_row = sim_row * (user_items != 0)
+            ranked = np.argsort(sim_row)[::-1]
+            reasons = []
+            for j in ranked:
+                if sim_row[j] <= 0:
+                    break
+                if j in used_indices:
+                    continue
+                movie_id = idx_to_movieid.get(int(j))
+                title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
+                rating   = actual_ratings.get(int(j), 0.0)
+                reasons.append((title, rating))
+                used_indices.add(j)
+                if len(reasons) == top_k:
+                    break
+            explanations.append(reasons)
+        return explanations

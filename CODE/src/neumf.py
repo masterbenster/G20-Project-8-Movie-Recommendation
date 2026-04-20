@@ -192,15 +192,22 @@ class NeuMFModel:
             rated_norm = rated_emb / (rated_emb.norm(dim=1, keepdim=True) + 1e-8)
             sims = (rec_norm @ rated_norm.T).cpu().numpy()
 
+        # Build explanations, tracking used items so each recommendation gets distinct reasons
         explanations = []
-        for idx, sim_row in enumerate(sims):
-            top_indices = np.argsort(sim_row)[::-1][:top_k]
+        used_indices = set()
+        for sim_row in sims:
+            ranked = np.argsort(sim_row)[::-1]
             reasons = []
-            for j in top_indices:
+            for j in ranked:
+                if j in used_indices:
+                    continue
                 movie_id = idx_to_movieid.get(int(rated_idxs[j]))
                 title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
                 rating   = rated_scores[j]
-                reasons.append(f"{title} ({rating:.1f}★)")
-            explanations.append("Because you liked: " + ", ".join(reasons))
+                reasons.append((title, rating))
+                used_indices.add(j)
+                if len(reasons) == top_k:
+                    break
+            explanations.append(reasons)
 
         return explanations
