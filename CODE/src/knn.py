@@ -32,14 +32,20 @@ class ItemKNN:
         self.sim = cosine_similarity(R.T, dense_output=False).astype(np.float32)
 
     def predict(self, df):
+        n_items, n_users = self.sim.shape[0], self.R.shape[0]
         preds = []
         for _, row in df.iterrows():
             u, i = int(row["user_idx"]), int(row["item_idx"])
             ub = self.user_bias.get(u, 0)
             ib = self.item_bias.get(i, 0)
 
+            # Fall back to bias-only for unseen users or items
+            if i >= n_items or u >= n_users:
+                preds.append(self.mu + ub + ib)
+                continue
+
             # Find top-k similar items that user u has rated
-            sim_row   = self.sim[i].toarray().flatten()
+            sim_row    = self.sim[i].toarray().flatten()
             user_items = self.R[u].toarray().flatten()
 
             rated_mask = user_items != 0

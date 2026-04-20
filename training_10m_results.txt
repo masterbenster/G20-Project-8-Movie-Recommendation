@@ -1,0 +1,31 @@
+Loading ml-10M100K...
+  Loading cached splits from DATA/ml-10M100K
+  Found cached splits, loading...
+
+Training GlobalMean...
+  Val  -> RMSE: 1.0556  MAE: 0.8413
+  Saved -> weights_10m/globalmean.joblib
+
+Training BiasModel...
+  Val  -> RMSE: 0.8828  MAE: 0.677
+  Saved -> weights_10m/biasmodel.joblib
+
+ALS: ROCm detected — implicit GPU backend requires CUDA/cupy, using CPU
+Training ALS...
+  Val  -> RMSE: 0.8714  MAE: 0.6631
+  Saved -> weights_10m/als.joblib
+
+Training KNN...
+  Val  -> RMSE: 0.8011  MAE: 0.6079
+  Saved -> weights_10m/knn.joblib
+
+  NeuMF: using GPU (ROCm - AMD Radeon RX 9070 XT)
+Training NeuMF...
+  Building negative sampling dataset (4 negatives per positive)...
+  Epoch 1/20 - Loss: 0.2866 - LR: 0.001000
+  Epoch 2/20 - Loss: 0.2347 - LR: 0.001000
+  Epoch 3/20 - Loss: 0.2075 - LR: 0.001000
+  Epoch 4/20 - Loss: 0.1967 - LR: 0.001000
+  Epoch 5/20 - Loss: 0.1911 - LR: 0.001000
+  Epoch 6/20 - Loss: 0.1876 - LR: 0.001000
+  Epoch 7/20 - Loss: 0.1853 - LR: 0.001000

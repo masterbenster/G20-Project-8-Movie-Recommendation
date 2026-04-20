@@ -58,19 +58,21 @@ def time_split(df, val_ratio=0.1, test_ratio=0.1, min_train=3):
             continue
 
         n_test = max(1, round(n * test_ratio))
-        n_val = max(1, round(n * val_ratio))
+        n_val  = max(1, round(n * val_ratio))
 
-        # ensure training set never shrinks below min_train
-        n_val = min(n_val, n - n_test - min_train)
-        n_test = min(n_test, n - n_val - min_train)
+        # ensure training set never shrinks below min_train, clamp to 0 minimum
+        n_val  = max(0, min(n_val,  n - n_test - min_train))
+        n_test = max(0, min(n_test, n - n_val  - min_train))
 
         train_parts.append(group.iloc[:n - n_val - n_test])
-        val_parts.append(group.iloc[n - n_val - n_test:n - n_test])
-        test_parts.append(group.iloc[n - n_test:])
+        if n_val  > 0:
+            val_parts.append(group.iloc[n - n_val - n_test:n - n_test])
+        if n_test > 0:
+            test_parts.append(group.iloc[n - n_test:])
 
     train = pd.concat(train_parts).drop(columns=["rank"], errors="ignore")
-    val   = pd.concat(val_parts).drop(columns=["rank"], errors="ignore")
-    test  = pd.concat(test_parts).drop(columns=["rank"], errors="ignore")
+    val   = pd.concat(val_parts).drop(columns=["rank"],  errors="ignore") if val_parts  else train.iloc[:0]
+    test  = pd.concat(test_parts).drop(columns=["rank"], errors="ignore") if test_parts else train.iloc[:0]
 
     # Report acutal split sizes
     total = len(df)
