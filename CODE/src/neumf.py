@@ -46,17 +46,38 @@ def _select_device():
             print("  NeuMF: using CPU")
     return dev
 
-class RatingsDataset(Dataset):
-    def __init__(self, df):
-        self.users  = torch.tensor(df["user_idx"].values, dtype=torch.long)
-        self.items  = torch.tensor(df["item_idx"].values, dtype=torch.long)
-        self.ratings = torch.tensor(df["rating"].values, dtype=torch.float)
+class NegativeSamplingDataset(Dataset):
+    def __init__(self, df, n_items, num_negatives=4, seed=42):
+        rng = np.random.default_rng(seed)
+        user_pos = df.groupby("user_idx")["item_idx"].apply(set).to_dict()
+
+        pos_u = df["user_idx"].values.astype(np.int64)
+        pos_i = df["item_idx"].values.astype(np.int64)
+        n = len(pos_u)
+
+        neg_u = np.repeat(pos_u, num_negatives)
+        neg_i = rng.integers(0, n_items, size=n * num_negatives)
+
+        # Fix the small fraction of sampled negatives that collide with positives
+        for idx in range(len(neg_u)):
+            while neg_i[idx] in user_pos[neg_u[idx]]:
+                neg_i[idx] = rng.integers(0, n_items)
+
+        all_u = np.concatenate([pos_u, neg_u])
+        all_i = np.concatenate([pos_i, neg_i])
+        all_l = np.concatenate([np.ones(n, dtype=np.float32),
+                                 np.zeros(n * num_negatives, dtype=np.float32)])
+
+        perm = rng.permutation(len(all_u))
+        self.users  = torch.from_numpy(all_u[perm])
+        self.items  = torch.from_numpy(all_i[perm])
+        self.labels = torch.from_numpy(all_l[perm])
 
     def __len__(self):
-        return len(self.ratings)
+        return len(self.labels)
 
     def __getitem__(self, idx):
-        return self.users[idx], self.items[idx], self.ratings[idx]
+        return self.users[idx], self.items[idx], self.labels[idx]
 
 
 class NeuMFNet(nn.Module):
@@ -73,7 +94,7 @@ class NeuMFNet(nn.Module):
         mlp = []
         in_dim = emb_dim * 2
         for out_dim in layers:
-            mlp += [nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(0.1)]
+            mlp += [nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(0.2)]
             in_dim = out_dim
         
         self.mlp = nn.Sequential(*mlp)
@@ -88,40 +109,41 @@ class NeuMFNet(nn.Module):
 
 
 class NeuMFModel:
-    def __init__(self, emb_dim=64, layers=[128,64,32], epochs=50, lr=0.0005, batch_size=4096):
-        self.emb_dim    = emb_dim
-        self.layers     = layers
-        self.epochs     = epochs
-        self.lr         = lr
-        self.batch_size = batch_size
-        self.device = _select_device()
+    rating_model = False  # outputs ranking scores, not rating predictions
+
+    def __init__(self, emb_dim=64, layers=[128,64,32], epochs=20, lr=0.001,
+                 batch_size=4096, num_negatives=4):
+        self.emb_dim       = emb_dim
+        self.layers        = layers
+        self.epochs        = epochs
+        self.lr            = lr
+        self.batch_size    = batch_size
+        self.num_negatives = num_negatives
+        self.device        = _select_device()
 
     def fit(self, train):
-        self.mu        = train["rating"].mean()
-        self.n_users   = train["user_idx"].max() + 1
-        self.n_items   = train["item_idx"].max() + 1
+        self.n_users = train["user_idx"].max() + 1
+        self.n_items = train["item_idx"].max() + 1
+
+        print(f"  Building negative sampling dataset ({self.num_negatives} negatives per positive)...")
+        dataset = NegativeSamplingDataset(train, self.n_items, self.num_negatives)
+        loader  = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         self.net = NeuMFNet(self.n_users, self.n_items, self.emb_dim, self.layers).to(self.device)
-       
-        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.8)
-        
-        criterion = nn.MSELoss()
-
-        loader = DataLoader(RatingsDataset(train), batch_size=self.batch_size, shuffle=True)
+        optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+        criterion = nn.BCEWithLogitsLoss()
 
         self.net.train()
         for epoch in range(self.epochs):
             total_loss = 0
-            for u, i, r in loader:
-                u, i, r = u.to(self.device), i.to(self.device), r.to(self.device)
+            for u, i, label in loader:
+                u, i, label = u.to(self.device), i.to(self.device), label.to(self.device)
                 optimizer.zero_grad()
-                pred = self.net(u, i)
-                loss = criterion(pred, r)
+                loss = criterion(self.net(u, i), label)
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            
             current_lr = scheduler.get_last_lr()[0]
             print(f"  Epoch {epoch+1}/{self.epochs} - Loss: {total_loss/len(loader):.4f} - LR: {current_lr:.6f}")
             scheduler.step()
@@ -130,11 +152,55 @@ class NeuMFModel:
         self.net.eval()
         u = torch.tensor(df["user_idx"].values, dtype=torch.long).to(self.device)
         i = torch.tensor(df["item_idx"].values, dtype=torch.long).to(self.device)
-
-        # Clamp to known range to avoid index errors on unseen users/items
         u = u.clamp(0, self.n_users - 1)
         i = i.clamp(0, self.n_items - 1)
+        with torch.no_grad():
+            scores = torch.sigmoid(self.net(u, i)).detach().cpu().numpy()
+        return scores
+
+    def explain(self, user_idx, recommended_item_idxs, train, movies, top_k=3):
+        """
+        For each recommended item, return the top_k items from the user's rated
+        history that are most similar to it in GMF embedding space.
+        Returns a list of explanation strings, one per recommended item.
+        """
+        self.net.eval()
+
+        # Items this user has rated, sorted by rating descending
+        user_ratings = (train[train["user_idx"] == user_idx]
+                        .sort_values("rating", ascending=False))
+        rated_idxs  = user_ratings["item_idx"].values.astype(int)
+        rated_scores = user_ratings["rating"].values
+
+        if len(rated_idxs) == 0:
+            return ["No rating history to explain from." for _ in recommended_item_idxs]
+
+        item_to_title = (movies.drop_duplicates("movieId")
+                               .set_index("movieId")["title"].to_dict())
+        idx_to_movieid = (train.drop_duplicates("item_idx")
+                               .set_index("item_idx")["movieId"].to_dict())
 
         with torch.no_grad():
-            preds = self.net(u, i).detach().cpu().numpy()
-        return preds.clip(0.5, 5.0)
+            # GMF item embeddings encode latent item similarity
+            rec_tensor   = torch.tensor(recommended_item_idxs, dtype=torch.long).to(self.device)
+            rated_tensor = torch.tensor(rated_idxs, dtype=torch.long).to(self.device)
+            rec_emb   = self.net.gmf_item(rec_tensor)    # (n_rec, emb_dim)
+            rated_emb = self.net.gmf_item(rated_tensor)  # (n_rated, emb_dim)
+
+            # Cosine similarity: (n_rec, n_rated)
+            rec_norm   = rec_emb   / (rec_emb.norm(dim=1, keepdim=True)   + 1e-8)
+            rated_norm = rated_emb / (rated_emb.norm(dim=1, keepdim=True) + 1e-8)
+            sims = (rec_norm @ rated_norm.T).cpu().numpy()
+
+        explanations = []
+        for idx, sim_row in enumerate(sims):
+            top_indices = np.argsort(sim_row)[::-1][:top_k]
+            reasons = []
+            for j in top_indices:
+                movie_id = idx_to_movieid.get(int(rated_idxs[j]))
+                title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
+                rating   = rated_scores[j]
+                reasons.append(f"{title} ({rating:.1f}★)")
+            explanations.append("Because you liked: " + ", ".join(reasons))
+
+        return explanations
