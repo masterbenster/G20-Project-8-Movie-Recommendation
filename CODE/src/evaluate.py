@@ -60,8 +60,9 @@ def evaluate_ranking(model, train, test, movies_df, k_list=[5, 10, 20], threshol
         if len(unseen) < n_negatives:
             continue
 
-        negatives = rng.choice(unseen, size=n_negatives, replace=False)
+        negatives  = rng.choice(unseen, size=n_negatives, replace=False)
         candidates = np.concatenate([relevant, negatives])
+        rng.shuffle(candidates)
 
         df_cand = pd.DataFrame({"user_idx": user_idx, "item_idx": candidates})
         scores  = model.predict(df_cand)
