@@ -15,7 +15,7 @@ def save_splits(train, val, test, dataset_dir):
     """Save train/val/test splits as parquet files inside dataset_dir."""
     for name, df in (("train", train), ("val", val), ("test", test)):
         df.to_parquet(os.path.join(dataset_dir, f"{name}.parquet"), index=False)
-    print(f"  Saved splits to {dataset_dir}")
+    print(f"  Saved splits to {dataset_dir}\n")
 
 def load_1m(path="ml-1m"):
     ratings = pd.read_csv(f"{path}/ratings.dat", sep="::", engine="python",
@@ -77,5 +77,5 @@ def time_split(df, val_ratio=0.1, test_ratio=0.1, min_train=3):
     print(f"  Split: train={len(train)} ({100*len(train)/total:.1f}%)  "
         f"val={len(val)} ({100*len(val)/total:.1f}%)  "
         f"test={len(test)} ({100*len(test)/total:.1f}%)")
-        
+
     return train, val, test

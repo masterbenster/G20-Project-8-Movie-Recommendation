@@ -16,9 +16,9 @@ def _als_class():
         except AttributeError:
             pass
     if torch.cuda.is_available() and torch.version.hip:
-        print("  ALS: ROCm detected — implicit GPU backend requires CUDA/cupy, using CPU")
+        print("ALS: ROCm detected — implicit GPU backend requires CUDA/cupy, using CPU")
     else:
-        print("  ALS: using CPU")
+        print("ALS: using CPU")
     return implicit.cpu.als.AlternatingLeastSquares
 
 class ALSModel:
