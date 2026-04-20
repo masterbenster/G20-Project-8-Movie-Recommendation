@@ -1,5 +1,7 @@
 import os
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
+from threadpoolctl import threadpool_limits
+threadpool_limits(1, "blas")
 
 import implicit
 import numpy as np
@@ -7,13 +9,16 @@ import torch
 from scipy.sparse import csr_matrix
 
 def _als_class():
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and not torch.version.hip:
         try:
             print("  ALS: using GPU (CUDA)")
             return implicit.gpu.als.AlternatingLeastSquares
         except AttributeError:
             pass
-    print("  ALS: using CPU")
+    if torch.cuda.is_available() and torch.version.hip:
+        print("  ALS: ROCm detected — implicit GPU backend requires CUDA/cupy, using CPU")
+    else:
+        print("  ALS: using CPU")
     return implicit.cpu.als.AlternatingLeastSquares
 
 class ALSModel:
