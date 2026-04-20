@@ -5,7 +5,7 @@ def load_splits(dataset_dir):
     """Load pre-saved train/val/test splits from dataset_dir, or return None if missing."""
     paths = {s: os.path.join(dataset_dir, f"{s}.parquet") for s in ("train", "val", "test")}
     if all(os.path.exists(p) for p in paths.values()):
-        print(f"  Loading cached splits from {dataset_dir}")
+        print(f"  Loading cached splits from {os.path.relpath(os.path.abspath(dataset_dir))}")
         return (pd.read_parquet(paths["train"]),
                 pd.read_parquet(paths["val"]),
                 pd.read_parquet(paths["test"]))
