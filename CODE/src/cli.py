@@ -5,7 +5,7 @@ import argparse
 import pickle
 import pandas as pd
 import numpy as np
-from src.data import load_1m
+from src.data import load_1m, load_splits, save_splits, time_split
 
 def get_recommendations(model, user_idx, train, movies, n=10):
     seen = set(train[train["user_idx"] == user_idx]["item_idx"].values)
@@ -45,10 +45,15 @@ def main():
 
     print(f"Loading data and model '{args.model}'...")
     data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
-    ratings, movies, users = load_1m(path=os.path.join(data_dir, "ml-1m"))
+    dataset_dir = os.path.join(data_dir, "ml-1m")
+    ratings, movies, users = load_1m(path=dataset_dir)
 
-    from src.data import time_split
-    train, val, test = time_split(ratings)
+    cached = load_splits(dataset_dir)
+    if cached:
+        train, val, test = cached
+    else:
+        train, val, test = time_split(ratings)
+        save_splits(train, val, test, dataset_dir)
 
     if args.model == "als":
         from src.als import ALSModel
