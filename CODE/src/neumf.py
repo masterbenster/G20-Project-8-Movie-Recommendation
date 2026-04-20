@@ -1,22 +1,33 @@
 import torch
 import torch.nn as nn
 import numpy as np
-import pandas as pd
 from torch.utils.data import Dataset, DataLoader
+
+
+def _pick_directml_device(torch_directml):
+    integrated = ("radeon(tm) graphics", "intel(r) uhd", "intel(r) iris", "intel(r) hd")
+    for i in range(torch_directml.device_count()):
+        name = torch_directml.device_name(i)
+        if not any(p in name.lower() for p in integrated):
+            return torch_directml.device(i), name
+    # fallback: just use device 0
+    return torch_directml.device(0), torch_directml.device_name(0)
 
 
 def _select_device():
     if torch.cuda.is_available():
         dev = torch.device("cuda")
-        print(f"  NeuMF: using GPU (CUDA - {torch.cuda.get_device_name(0)})")
+        name = torch.cuda.get_device_name(0)
+        backend = "ROCm" if torch.version.hip else "CUDA"
+        print(f"  NeuMF: using GPU ({backend} - {name})")
     elif torch.backends.mps.is_available():
         dev = torch.device("mps")
         print("  NeuMF: using GPU (MPS - Apple Silicon)")
     else:
         try:
             import torch_directml
-            dev = torch_directml.device()
-            print(f"  NeuMF: using GPU (DirectML - {torch_directml.device_name(torch_directml.default_device())})")
+            dev, name = _pick_directml_device(torch_directml)
+            print(f"  NeuMF: using GPU (DirectML - {name})")
         except ImportError:
             dev = torch.device("cpu")
             print("  NeuMF: using CPU")
@@ -69,7 +80,9 @@ class NeuMFModel:
         self.n_items   = train["item_idx"].max() + 1
 
         self.net = NeuMFNet(self.n_users, self.n_items, self.emb_dim, self.layers).to(self.device)
+       
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+        
         criterion = nn.MSELoss()
 
         loader = DataLoader(RatingsDataset(train), batch_size=self.batch_size, shuffle=True)

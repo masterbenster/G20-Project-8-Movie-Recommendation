@@ -27,9 +27,9 @@ class ItemKNN:
             (train["rating_centered"].values, (train["user_idx"].values, train["item_idx"].values)),
             shape=(self.n_users, self.n_items)
         )
-        self.R = R
+        self.R = R.astype(np.float32)
         # item-item cosine similarity (items as rows)
-        self.sim = cosine_similarity(R.T, dense_output=False)
+        self.sim = cosine_similarity(R.T, dense_output=False).astype(np.float32)
 
     def predict(self, df):
         preds = []

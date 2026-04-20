@@ -1,5 +1,5 @@
 import os
-import pickle
+import joblib
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 from src.data import load_1m, time_split
@@ -13,10 +13,9 @@ WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
 def save(model, name):
-    path = os.path.join(WEIGHTS_DIR, f"{name}.pkl")
-    with open(path, "wb") as f:
-        pickle.dump(model, f)
-    print(f"  Saved -> weights/{name}.pkl")
+    path = os.path.join(WEIGHTS_DIR, f"{name}.joblib")
+    joblib.dump(model, path, compress=("bz2", 3))
+    print(f"  Saved -> weights/{name}.joblib")
 
 print("Loading ml-1m...")
 ratings, movies, users = load_1m(path=os.path.join(DATA_DIR, "ml-1m"))
