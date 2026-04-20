@@ -77,9 +77,21 @@ def main():
     user_idx = user_map[args.user]
     recs = get_recommendations(model, user_idx, train, movies, n=args.topn)
 
+    # NeuMF can explain each recommendation via GMF embedding similarity
+    explanations = None
+    if args.model == "neumf" and hasattr(model, "explain"):
+        title_to_idx = (train.drop_duplicates("item_idx")
+                             .merge(movies, on="movieId")[["title", "item_idx"]]
+                             .set_index("title")["item_idx"].to_dict())
+        rec_item_idxs = [title_to_idx[title] for title, _ in recs if title in title_to_idx]
+        if len(rec_item_idxs) == len(recs):
+            explanations = model.explain(user_idx, rec_item_idxs, train, movies)
+
     print(f"\nTop {args.topn} recommendations for User {args.user} ({args.model.upper()}):")
     for i, (title, score) in enumerate(recs, 1):
         print(f"  {i:2}. {title}  (score: {score})")
+        if explanations:
+            print(f"       {explanations[i-1]}")
 
 
 if __name__ == "__main__":
