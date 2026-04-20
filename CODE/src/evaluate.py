@@ -40,18 +40,20 @@ def evaluate_ranking(model, train, test, movies_df, k_list=[5, 10, 20], threshol
     max_k   = max(k_list)
 
     seen = train.groupby("user_idx")["item_idx"].apply(set).to_dict()
-    relevant_items = (
-        test[test["rating"] >= threshold]
-        .groupby("user_idx")["item_idx"].apply(list).to_dict()
-    )
+
+    # One positive per user: the highest-rated test item >= threshold (leave-one-out protocol)
+    qualifying = test[test["rating"] >= threshold].copy()
+    qualifying = (qualifying.sort_values("rating", ascending=False)
+                             .drop_duplicates("user_idx"))
+    positive_item = qualifying.set_index("user_idx")["item_idx"].to_dict()
 
     all_items = np.arange(train["item_idx"].max() + 1)
-    user_list = list(relevant_items.keys())[:max_users]
+    user_list = list(positive_item.keys())[:max_users]
     rng       = np.random.default_rng(42)
 
     import pandas as pd
     for user_idx in user_list:
-        relevant  = relevant_items[user_idx]
+        relevant  = [positive_item[user_idx]]
         user_seen = seen.get(user_idx, set()) | set(relevant)
         unseen    = np.array([i for i in all_items if i not in user_seen])
 
