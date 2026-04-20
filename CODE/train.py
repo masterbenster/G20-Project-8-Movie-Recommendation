@@ -26,21 +26,24 @@ def save(model, name):
 def train_eval(name, model, train, val, movies):
     print(f"Training {name}...")
     model.fit(train)
-    val_metrics = evaluate_rating(model, val)
-    print(f"  Val  -> RMSE: {val_metrics['RMSE']}  MAE: {val_metrics['MAE']}")
+    if getattr(model, "rating_model", True):
+        val_metrics = evaluate_rating(model, val)
+        print(f"  Val  -> RMSE: {val_metrics['RMSE']}  MAE: {val_metrics['MAE']}")
+    else:
+        print(f"  Val  -> (BCE ranking model — no RMSE/MAE)")
     save(model, name.lower().replace(" ", "_"))
     return model
 
 
 # ── Load data ────────────────────────────────────────────────────────────────
 print("Loading ml-1m...")
+ratings, movies, users = load_1m(path=DATASET_DIR)
 
 cached = load_splits(DATASET_DIR)
 if cached:
-    print("  Found cached splits, loading...")
+    print("  Found cached splits, loading...\n")
     train, val, test = cached
 else:
-    ratings, movies, users = load_1m(path=DATASET_DIR)
     print("  Splitting...")
     train, val, test = time_split(ratings)
     save_splits(train, val, test, DATASET_DIR)
@@ -51,7 +54,7 @@ models["global_mean"] = train_eval("GlobalMean", GlobalMean(),  train, val, movi
 models["bias_model"]  = train_eval("BiasModel",  BiasModel(),   train, val, movies)
 models["als"]         = train_eval("ALS",         ALSModel(factors=128, iterations=30, regularization=0.05), train, val, movies)
 models["knn"]         = train_eval("KNN",         ItemKNN(k=20), train, val, movies)
-models["neumf"]       = train_eval("NeuMF",       NeuMFModel(emb_dim=64, layers=[128, 64, 32], epochs=50, lr=0.001, batch_size=4096), train, val, movies)
+models["neumf"]       = train_eval("NeuMF",       NeuMFModel(emb_dim=64, layers=[128, 64, 32]), train, val, movies)
 
 # ── Final test evaluation (run once, after hyperparams are locked in) ─────────
 print("\n" + "=" * 60)
@@ -60,6 +63,9 @@ print("=" * 60)
 
 print("\n-- Rating Prediction (RMSE / MAE) --")
 for name, model in models.items():
+    if not getattr(model, "rating_model", True):
+        print(f"  {name:<12} (BCE ranking model — skipped)")
+        continue
     m = evaluate_rating(model, test)
     print(f"  {name:<12} RMSE: {m['RMSE']}  MAE: {m['MAE']}")
 
