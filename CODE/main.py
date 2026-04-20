@@ -44,7 +44,7 @@ knn.fit(train)
 save(knn, "knn")
 
 print("Training NeuMF...")
-neumf = NeuMFModel(emb_dim=32, layers=[64, 32, 16], epochs=10, lr=0.001, batch_size=1024)
+neumf = NeuMFModel(emb_dim=64, layers=[128, 64, 32], epochs=50, lr=0.001, batch_size=2048)
 neumf.fit(train)
 save(neumf, "neumf")
 

@@ -8,16 +8,29 @@ def _pick_directml_device(torch_directml):
     integrated = ("radeon(tm) graphics", "intel(r) uhd", "intel(r) iris", "intel(r) hd")
     for i in range(torch_directml.device_count()):
         name = torch_directml.device_name(i)
+        print(f"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~    DirectML device {i}: {name}")
         if not any(p in name.lower() for p in integrated):
             return torch_directml.device(i), name
     # fallback: just use device 0
     return torch_directml.device(0), torch_directml.device_name(0)
 
 
+def _select_rocm_device():
+    integrated = ("radeon(tm) graphics", "intel", "vega 8", "vega 6", "vega 3")
+    for i in range(torch.cuda.device_count()):
+        name = torch.cuda.get_device_name(i)
+        if not any(p in name.lower() for p in integrated):
+            return i, name
+    return 0, torch.cuda.get_device_name(0)
+
+
 def _select_device():
     if torch.cuda.is_available():
-        dev = torch.device("cuda")
-        name = torch.cuda.get_device_name(0)
+        if torch.version.hip:
+            idx, name = _select_rocm_device()
+        else:
+            idx, name = 0, torch.cuda.get_device_name(0)
+        dev = torch.device(f"cuda:{idx}")
         backend = "ROCm" if torch.version.hip else "CUDA"
         print(f"  NeuMF: using GPU ({backend} - {name})")
     elif torch.backends.mps.is_available():
@@ -49,24 +62,33 @@ class RatingsDataset(Dataset):
 class NeuMFNet(nn.Module):
     def __init__(self, n_users, n_items, emb_dim=32, layers=[64, 32, 16]):
         super().__init__()
-        self.user_emb = nn.Embedding(n_users, emb_dim)
-        self.item_emb = nn.Embedding(n_items, emb_dim)
+        # GMF embeddings (dot product)
+        self.gmf_user = nn.Embedding(n_users, emb_dim)
+        self.gmf_item = nn.Embedding(n_items, emb_dim)
+        # MLP embeddings (separate weights)
+        self.mlp_user = nn.Embedding(n_users, emb_dim)
+        self.mlp_item = nn.Embedding(n_items, emb_dim)
+
 
         mlp = []
         in_dim = emb_dim * 2
         for out_dim in layers:
             mlp += [nn.Linear(in_dim, out_dim), nn.ReLU(), nn.Dropout(0.2)]
             in_dim = out_dim
-        mlp.append(nn.Linear(in_dim, 1))
+        
         self.mlp = nn.Sequential(*mlp)
 
+        self.output = nn.Linear(emb_dim + layers[-1], 1)
+
     def forward(self, u, i):
-        x = torch.cat([self.user_emb(u), self.item_emb(i)], dim=-1)
-        return self.mlp(x).squeeze()
+        gmf = self.gmf_user(u) * self.gmf_item(i)  # element-wise product
+        mlp_x = torch.cat([self.mlp_user(u), self.mlp_item(i)], dim=-1)
+        mlp_out = self.mlp(mlp_x)
+        return self.output(torch.cat([gmf, mlp_out], dim=-1)).squeeze()
 
 
 class NeuMFModel:
-    def __init__(self, emb_dim=32, layers=[64,32,16], epochs=10, lr=0.001, batch_size=1024):
+    def __init__(self, emb_dim=64, layers=[128,64,32], epochs=50, lr=0.001, batch_size=2048):
         self.emb_dim    = emb_dim
         self.layers     = layers
         self.epochs     = epochs
