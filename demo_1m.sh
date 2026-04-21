@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run 3 users through each model. NeuMF includes per-recommendation explanations.
-# Usage: ./demo.sh
+# Usage: ./demo_1m.sh
 # Must be run from the repo root. Requires CODE/weights/ to be populated (run CODE/train.py first).
 
 set -e
