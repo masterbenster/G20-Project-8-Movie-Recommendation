@@ -58,10 +58,14 @@ class NegativeSamplingDataset(Dataset):
         neg_u = np.repeat(pos_u, num_negatives)
         neg_i = rng.integers(0, n_items, size=n * num_negatives)
 
-        # Fix the small fraction of sampled negatives that collide with positives
-        for idx in range(len(neg_u)):
-            while neg_i[idx] in user_pos[neg_u[idx]]:
-                neg_i[idx] = rng.integers(0, n_items)
+        # Vectorized collision fix: re-sample only the colliding entries each pass.
+        # Collision rate is ~1-2% on 10M so this converges in 1-2 passes.
+        collision = np.array([neg_i[k] in user_pos[neg_u[k]] for k in range(len(neg_u))])
+        while collision.any():
+            neg_i[collision] = rng.integers(0, n_items, size=collision.sum())
+            collision[collision] = np.array([
+                neg_i[k] in user_pos[neg_u[k]] for k in np.where(collision)[0]
+            ])
 
         all_u = np.concatenate([pos_u, neg_u])
         all_i = np.concatenate([pos_i, neg_i])
@@ -112,13 +116,14 @@ class NeuMFModel:
     rating_model = False  # outputs ranking scores, not rating predictions
 
     def __init__(self, emb_dim=64, layers=[128,64,32], epochs=20, lr=0.001,
-                 batch_size=4096, num_negatives=4):
+                 batch_size=4096, num_negatives=4, num_workers=2):
         self.emb_dim       = emb_dim
         self.layers        = layers
         self.epochs        = epochs
         self.lr            = lr
         self.batch_size    = batch_size
         self.num_negatives = num_negatives
+        self.num_workers   = num_workers
         self.device        = _select_device()
 
     def fit(self, train):
@@ -127,7 +132,10 @@ class NeuMFModel:
 
         print(f"  Building negative sampling dataset ({self.num_negatives} negatives per positive)...")
         dataset = NegativeSamplingDataset(train, self.n_items, self.num_negatives)
-        loader  = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        pin = self.device.type != "cpu" if hasattr(self.device, "type") else False
+        loader  = DataLoader(dataset, batch_size=self.batch_size, shuffle=True,
+                             num_workers=self.num_workers, pin_memory=pin,
+                             persistent_workers=self.num_workers > 0)
 
         self.net = NeuMFNet(self.n_users, self.n_items, self.emb_dim, self.layers).to(self.device)
         optimizer = torch.optim.Adam(self.net.parameters(), lr=self.lr, weight_decay=1e-5)
@@ -139,7 +147,7 @@ class NeuMFModel:
             total_loss = 0
             for u, i, label in loader:
                 u, i, label = u.to(self.device), i.to(self.device), label.to(self.device)
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 loss = criterion(self.net(u, i), label)
                 loss.backward()
                 optimizer.step()
@@ -192,22 +200,14 @@ class NeuMFModel:
             rated_norm = rated_emb / (rated_emb.norm(dim=1, keepdim=True) + 1e-8)
             sims = (rec_norm @ rated_norm.T).cpu().numpy()
 
-        # Build explanations, tracking used items so each recommendation gets distinct reasons
         explanations = []
-        used_indices = set()
         for sim_row in sims:
-            ranked = np.argsort(sim_row)[::-1]
+            top_j   = np.argsort(sim_row)[::-1][:top_k]
             reasons = []
-            for j in ranked:
-                if j in used_indices:
-                    continue
+            for j in top_j:
                 movie_id = idx_to_movieid.get(int(rated_idxs[j]))
                 title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
-                rating   = rated_scores[j]
-                reasons.append((title, rating))
-                used_indices.add(j)
-                if len(reasons) == top_k:
-                    break
+                reasons.append((title, float(rated_scores[j])))
             explanations.append(reasons)
 
         return explanations
