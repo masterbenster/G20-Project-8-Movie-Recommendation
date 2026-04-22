@@ -1,8 +1,0 @@
-numpy
-pandas
-scipy
-scikit-learn
-implicit
-torch
-torch-directml
-pyarrow
