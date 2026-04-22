@@ -1,0 +1,104 @@
+Loading ml-1m...
+  Loading cached splits from DATA/ml-1m
+  Found cached splits, loading...
+
+Training GlobalMean...
+  Val  -> RMSE: 1.1283  MAE: 0.9297
+  Saved -> weights/globalmean.joblib
+
+Training BiasModel...
+  Val  -> RMSE: 0.9343  MAE: 0.7302
+  Saved -> weights/biasmodel.joblib
+
+ALS: ROCm detected — implicit GPU backend requires CUDA/cupy, using CPU
+Training ALS...
+  Val  -> RMSE: 0.9253  MAE: 0.7189
+  Saved -> weights/als.joblib
+
+Training KNN...
+  Val  -> RMSE: 0.8603  MAE: 0.671
+  Saved -> weights/knn.joblib
+
+  NeuMF: using GPU (ROCm - AMD Radeon RX 9070 XT)
+Training NeuMF...
+  Building negative sampling dataset (4 negatives per positive)...
+  Epoch 1/20 - Loss: 0.4103 - LR: 0.001000
+  Epoch 2/20 - Loss: 0.3622 - LR: 0.001000
+  Epoch 3/20 - Loss: 0.3566 - LR: 0.001000
+  Epoch 4/20 - Loss: 0.3507 - LR: 0.001000
+  Epoch 5/20 - Loss: 0.3333 - LR: 0.001000
+  Epoch 6/20 - Loss: 0.3178 - LR: 0.001000
+  Epoch 7/20 - Loss: 0.3038 - LR: 0.001000
+  Epoch 8/20 - Loss: 0.2919 - LR: 0.001000
+  Epoch 9/20 - Loss: 0.2822 - LR: 0.001000
+  Epoch 10/20 - Loss: 0.2751 - LR: 0.001000
+  Epoch 11/20 - Loss: 0.2626 - LR: 0.000500
+  Epoch 12/20 - Loss: 0.2577 - LR: 0.000500
+  Epoch 13/20 - Loss: 0.2543 - LR: 0.000500
+  Epoch 14/20 - Loss: 0.2512 - LR: 0.000500
+  Epoch 15/20 - Loss: 0.2484 - LR: 0.000500
+  Epoch 16/20 - Loss: 0.2459 - LR: 0.000500
+  Epoch 17/20 - Loss: 0.2435 - LR: 0.000500
+  Epoch 18/20 - Loss: 0.2412 - LR: 0.000500
+  Epoch 19/20 - Loss: 0.2394 - LR: 0.000500
+  Epoch 20/20 - Loss: 0.2374 - LR: 0.000500
+  Val  -> (BCE ranking model — no RMSE/MAE)
+  Saved -> weights/neumf.joblib
+
+
+============================================================
+FINAL TEST RESULTS
+============================================================
+
+-- Rating Prediction (RMSE / MAE) --
+  global_mean  RMSE: 1.1651  MAE: 0.9585
+  bias_model   RMSE: 0.952  MAE: 0.7436
+  als          RMSE: 0.9459  MAE: 0.7357
+  knn          RMSE: 0.8852  MAE: 0.6904
+  neumf        (BCE ranking model — skipped)
+
+-- Ranking (Precision / Recall / NDCG @K) --
+  global_mean
+    @5    P: 0.0124  R: 0.062  NDCG: 0.0358
+    @10   P: 0.0118  R: 0.118  NDCG: 0.0532
+    @20   P: 0.0117  R: 0.234  NDCG: 0.0823
+  bias_model
+    @5    P: 0.0472  R: 0.236  NDCG: 0.1349
+    @10   P: 0.041  R: 0.41  NDCG: 0.1901
+    @20   P: 0.0299  R: 0.598  NDCG: 0.2372
+  als
+    @5    P: 0.0536  R: 0.268  NDCG: 0.1587
+    @10   P: 0.0438  R: 0.438  NDCG: 0.2135
+    @20   P: 0.0313  R: 0.626  NDCG: 0.261
+  knn
+    @5    P: 0.0488  R: 0.244  NDCG: 0.1407
+    @10   P: 0.0432  R: 0.432  NDCG: 0.2012
+    @20   P: 0.0326  R: 0.652  NDCG: 0.2561
+  neumf
+    @5    P: 0.094  R: 0.47  NDCG: 0.3151
+    @10   P: 0.0666  R: 0.666  NDCG: 0.3784
+    @20   P: 0.0423  R: 0.846  NDCG: 0.4239
+
+        Command being timed: "python3 -u CODE/train.py"
+        User time (seconds): 1348.22
+        System time (seconds): 47.46
+        Percent of CPU this job got: 404%
+        Elapsed (wall clock) time (h:mm:ss or m:ss): 5:45.09
+        Average shared text size (kbytes): 0
+        Average unshared data size (kbytes): 0
+        Average stack size (kbytes): 0
+        Average total size (kbytes): 0
+        Maximum resident set size (kbytes): 3878552
+        Average resident set size (kbytes): 0
+        Major (requiring I/O) page faults: 22711
+        Minor (reclaiming a frame) page faults: 4234419
+        Voluntary context switches: 1481674
+        Involuntary context switches: 5130
+        Swaps: 0
+        File system inputs: 4910656
+        File system outputs: 4356824
+        Socket messages sent: 0
+        Socket messages received: 0
+        Signals delivered: 0
+        Page size (bytes): 4096
+        Exit status: 0
