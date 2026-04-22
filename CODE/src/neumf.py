@@ -166,11 +166,11 @@ class NeuMFModel:
             scores = torch.sigmoid(self.net(u, i)).detach().cpu().numpy()
         return scores
 
-    def explain(self, user_idx, recommended_item_idxs, train, movies, top_k=3):
+    def explain(self, user_idx, recommended_item_idxs, train, movies, top_n=20):
         """
-        For each recommended item, return the top_k items from the user's rated
-        history that are most similar to it in GMF embedding space.
-        Returns a list of explanation strings, one per recommended item.
+        Return the top_n items from the user's rated history that are most
+        similar to the recommended items in GMF embedding space, aggregated
+        across all recommendations. Returns a list of (title, rating) tuples.
         """
         self.net.eval()
 
@@ -200,14 +200,11 @@ class NeuMFModel:
             rated_norm = rated_emb / (rated_emb.norm(dim=1, keepdim=True) + 1e-8)
             sims = (rec_norm @ rated_norm.T).cpu().numpy()
 
-        explanations = []
-        for sim_row in sims:
-            top_j   = np.argsort(sim_row)[::-1][:top_k]
-            reasons = []
-            for j in top_j:
-                movie_id = idx_to_movieid.get(int(rated_idxs[j]))
-                title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
-                reasons.append((title, float(rated_scores[j])))
-            explanations.append(reasons)
-
-        return explanations
+        agg   = sims.sum(axis=0)  # aggregate similarity across all recs
+        top_j = np.argsort(agg)[::-1][:top_n]
+        result = []
+        for j in top_j:
+            movie_id = idx_to_movieid.get(int(rated_idxs[j]))
+            title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
+            result.append((title, float(rated_scores[j])))
+        return result

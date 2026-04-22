@@ -77,41 +77,31 @@ class ALSModel:
         ids, scores = self.model.recommend(user_idx, self.R[user_idx], N=N)
         return list(zip(ids.tolist(), scores.tolist()))
 
-    def explain(self, user_idx, recommended_item_idxs, train, movies, top_k=3):
-        itf = self.model.item_factors
+    def explain(self, user_idx, recommended_item_idxs, train, movies, top_n=20):
+        itf            = self.model.item_factors
         idx_to_movieid = train.drop_duplicates("item_idx").set_index("item_idx")["movieId"].to_dict()
         item_to_title  = movies.drop_duplicates("movieId").set_index("movieId")["title"].to_dict()
 
-        user_ratings = (train[train["user_idx"] == user_idx]
-                        .sort_values("rating", ascending=False))
-        rated_idxs   = user_ratings["item_idx"].values.astype(int)
+        user_ratings   = (train[train["user_idx"] == user_idx]
+                          .sort_values("rating", ascending=False))
+        rated_idxs     = user_ratings["item_idx"].values.astype(int)
         actual_ratings = {int(r["item_idx"]): r["rating"]
                           for _, r in user_ratings.iterrows()}
 
         if len(rated_idxs) == 0:
-            return [[] for _ in recommended_item_idxs]
+            return []
 
         rec_emb   = itf[recommended_item_idxs]
         rated_emb = itf[rated_idxs]
 
         rec_norm   = rec_emb   / (np.linalg.norm(rec_emb,   axis=1, keepdims=True) + 1e-8)
         rated_norm = rated_emb / (np.linalg.norm(rated_emb, axis=1, keepdims=True) + 1e-8)
-        sims = rec_norm @ rated_norm.T  # (n_rec, n_rated)
+        agg = (rec_norm @ rated_norm.T).sum(axis=0)  # aggregate similarity across all recs
 
-        explanations = []
-        used_indices = set()
-        for sim_row in sims:
-            ranked = np.argsort(sim_row)[::-1]
-            reasons = []
-            for j in ranked:
-                if j in used_indices:
-                    continue
-                movie_id = idx_to_movieid.get(int(rated_idxs[j]))
-                title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
-                rating   = actual_ratings.get(int(rated_idxs[j]), 0.0)
-                reasons.append((title, rating))
-                used_indices.add(j)
-                if len(reasons) == top_k:
-                    break
-            explanations.append(reasons)
-        return explanations
+        top_j  = np.argsort(agg)[::-1][:top_n]
+        result = []
+        for j in top_j:
+            movie_id = idx_to_movieid.get(int(rated_idxs[j]))
+            title    = item_to_title.get(movie_id, f"MovieID {movie_id}")
+            result.append((title, actual_ratings.get(int(rated_idxs[j]), 0.0)))
+        return result
