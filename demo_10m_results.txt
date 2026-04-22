@@ -1,0 +1,284 @@
+========================================
+  USER 42
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'als' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/als.joblib
+
+Top 5 recommendations for User 42 (ALS):
+   1. Rosario Tijeras (2005)  (score: 5.0)
+   2. Human Condition III, The (Ningen no joken III) (1961)  (score: 5.0)
+   3. Human Condition II, The (Ningen no joken II) (1959)  (score: 5.0)
+   4. Samurai Rebellion (Jôi-uchi: Hairyô tsuma shimatsu) (1967)  (score: 5.0)
+   5. Katyn (2007)  (score: 5.0)
+
+Top rated history driving these recommendations (ALS):
+   1. Days of Thunder (1990)  (3.0★)
+   2. How to Make an American Quilt (1995)  (4.0★)
+   3. Victor/Victoria (1982)  (4.0★)
+   4. Private Benjamin (1980)  (4.0★)
+   5. Little Women (1994)  (3.0★)
+   6. Dial M for Murder (1954)  (4.0★)
+   7. Top Gun (1986)  (3.0★)
+   8. Monty Python and the Holy Grail (1975)  (4.0★)
+   9. Sword in the Stone, The (1963)  (3.0★)
+  10. Reality Bites (1994)  (3.0★)
+  11. Monty Python's Life of Brian (1979)  (5.0★)
+  12. Aristocats, The (1970)  (4.0★)
+  13. Die Hard (1988)  (3.0★)
+  14. Snow White and the Seven Dwarfs (1937)  (4.0★)
+  15. Pretty Woman (1990)  (4.0★)
+  16. Aladdin (1992)  (3.0★)
+  17. Pinocchio (1940)  (4.0★)
+  18. Home Alone (1990)  (3.0★)
+  19. Dirty Dancing (1987)  (3.0★)
+  20. Dances with Wolves (1990)  (4.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'knn' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/knn.joblib
+
+Top 5 recommendations for User 42 (KNN):
+   1. Angus, Thongs and Perfect Snogging (2008)  (score: 5.0)
+   2. Life is a Miracle (Zivot je cudo) (2004)  (score: 5.0)
+   3. Nazarín (1959)  (score: 5.0)
+   4. Samurai Rebellion (Jôi-uchi: Hairyô tsuma shimatsu) (1967)  (score: 5.0)
+   5. Human Condition II, The (Ningen no joken II) (1959)  (score: 5.0)
+
+Top rated history driving these recommendations (KNN):
+   1. Monty Python's Life of Brian (1979)  (5.0★)
+   2. Reality Bites (1994)  (3.0★)
+   3. Monty Python and the Holy Grail (1975)  (4.0★)
+   4. Pretty Woman (1990)  (4.0★)
+   5. Braveheart (1995)  (4.0★)
+   6. Piano, The (1993)  (5.0★)
+
+----------------------------------------
+  Model: NEUMF  |  User: 42  |  Top 5
+----------------------------------------
+Loading data and model 'neumf' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/neumf.joblib
+
+Top 5 recommendations for User 42 (NEUMF):
+   1. Batman (1989)  (score: 0.994)
+   2. Pulp Fiction (1994)  (score: 0.989)
+   3. Stargate (1994)  (score: 0.989)
+   4. True Lies (1994)  (score: 0.988)
+   5. Jurassic Park (1993)  (score: 0.988)
+
+Top rated history driving these recommendations (NEUMF):
+   1. Dirty Dancing (1987)  (3.0★)
+   2. Days of Thunder (1990)  (3.0★)
+   3. E.T. the Extra-Terrestrial (1982)  (3.0★)
+   4. Top Gun (1986)  (3.0★)
+   5. Die Hard (1988)  (3.0★)
+   6. Reality Bites (1994)  (3.0★)
+   7. Sword in the Stone, The (1963)  (3.0★)
+   8. Little Women (1994)  (3.0★)
+   9. Beauty and the Beast (1991)  (3.0★)
+  10. Home Alone (1990)  (3.0★)
+  11. Die Hard: With a Vengeance (1995)  (3.0★)
+  12. Aladdin (1992)  (3.0★)
+  13. Lion King, The (1994)  (3.0★)
+  14. Dial M for Murder (1954)  (4.0★)
+  15. Victor/Victoria (1982)  (4.0★)
+  16. Private Benjamin (1980)  (4.0★)
+  17. Dances with Wolves (1990)  (4.0★)
+  18. Snow White and the Seven Dwarfs (1937)  (4.0★)
+  19. Pinocchio (1940)  (4.0★)
+  20. Aristocats, The (1970)  (4.0★)
+
+========================================
+  USER 150
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'als' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/als.joblib
+
+Top 5 recommendations for User 150 (ALS):
+   1. Angus, Thongs and Perfect Snogging (2008)  (score: 5.0)
+   2. Nazarín (1959)  (score: 5.0)
+   3. Canvas (2006)  (score: 5.0)
+   4. More (1998)  (score: 5.0)
+   5. Close-Up (Nema-ye Nazdik) (1990)  (score: 5.0)
+
+Top rated history driving these recommendations (ALS):
+   1. Taxi Driver (1976)  (4.0★)
+   2. Three Colors: Blue (Trois couleurs: Bleu) (1993)  (5.0★)
+   3. Three Colors: White (Trois couleurs: Blanc) (1994)  (3.0★)
+   4. Three Colors: Red (Trois couleurs: Rouge) (1994)  (3.0★)
+   5. Belle de jour (1967)  (3.0★)
+   6. Ballad of Narayama (Narayama Bushiko) (1958)  (4.0★)
+   7. Mighty Aphrodite (1995)  (5.0★)
+   8. Exotica (1994)  (3.0★)
+   9. Dances with Wolves (1990)  (3.0★)
+  10. Age of Innocence, The (1993)  (4.0★)
+  11. Sense and Sensibility (1995)  (5.0★)
+  12. Schindler's List (1993)  (5.0★)
+  13. Like Water for Chocolate (Como agua para chocolate) (1992)  (3.0★)
+  14. Bridges of Madison County, The (1995)  (5.0★)
+  15. Babe (1995)  (4.0★)
+  16. Piano, The (1993)  (5.0★)
+  17. Forrest Gump (1994)  (4.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'knn' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/knn.joblib
+
+Top 5 recommendations for User 150 (KNN):
+   1. Human Condition III, The (Ningen no joken III) (1961)  (score: 5.0)
+   2. Close-Up (Nema-ye Nazdik) (1990)  (score: 5.0)
+   3. Rock & Rule (1983)  (score: 5.0)
+   4. Blue Light, The (Das Blaue Licht) (1932)  (score: 5.0)
+   5. 300 Spartans, The (1962)  (score: 5.0)
+
+Top rated history driving these recommendations (KNN):
+   1. Bridges of Madison County, The (1995)  (5.0★)
+   2. Schindler's List (1993)  (5.0★)
+   3. Belle de jour (1967)  (3.0★)
+   4. Dances with Wolves (1990)  (3.0★)
+
+----------------------------------------
+  Model: NEUMF  |  User: 150  |  Top 5
+----------------------------------------
+Loading data and model 'neumf' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/neumf.joblib
+
+Top 5 recommendations for User 150 (NEUMF):
+   1. Pulp Fiction (1994)  (score: 0.977)
+   2. Fargo (1996)  (score: 0.973)
+   3. Silence of the Lambs, The (1991)  (score: 0.972)
+   4. Shawshank Redemption, The (1994)  (score: 0.969)
+   5. Braveheart (1995)  (score: 0.967)
+
+Top rated history driving these recommendations (NEUMF):
+   1. Dances with Wolves (1990)  (3.0★)
+   2. Belle de jour (1967)  (3.0★)
+   3. Like Water for Chocolate (Como agua para chocolate) (1992)  (3.0★)
+   4. Three Colors: White (Trois couleurs: Blanc) (1994)  (3.0★)
+   5. Exotica (1994)  (3.0★)
+   6. Three Colors: Red (Trois couleurs: Rouge) (1994)  (3.0★)
+   7. Age of Innocence, The (1993)  (4.0★)
+   8. Forrest Gump (1994)  (4.0★)
+   9. Taxi Driver (1976)  (4.0★)
+  10. Ballad of Narayama (Narayama Bushiko) (1958)  (4.0★)
+  11. Babe (1995)  (4.0★)
+  12. Schindler's List (1993)  (5.0★)
+  13. Piano, The (1993)  (5.0★)
+  14. Three Colors: Blue (Trois couleurs: Bleu) (1993)  (5.0★)
+  15. Bridges of Madison County, The (1995)  (5.0★)
+  16. Mighty Aphrodite (1995)  (5.0★)
+  17. Sense and Sensibility (1995)  (5.0★)
+
+========================================
+  USER 1054
+========================================
+
+----------------------------------------
+  Model: ALS  |  User: 1054  |  Top 5
+----------------------------------------
+Loading data and model 'als' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/als.joblib
+
+Top 5 recommendations for User 1054 (ALS):
+   1. Rock & Rule (1983)  (score: 4.929)
+   2. Class, The (Entre les Murs) (2008)  (score: 4.929)
+   3. Only Yesterday (Omohide poro poro) (1991)  (score: 4.929)
+   4. Human Condition II, The (Ningen no joken II) (1959)  (score: 4.929)
+   5. Blue Light, The (Das Blaue Licht) (1932)  (score: 4.929)
+
+Top rated history driving these recommendations (ALS):
+   1. Addams Family Values (1993)  (4.0★)
+   2. Firm, The (1993)  (2.0★)
+   3. Robin Hood: Men in Tights (1993)  (5.0★)
+   4. Beverly Hills Cop III (1994)  (3.0★)
+   5. While You Were Sleeping (1995)  (3.0★)
+   6. Sleepless in Seattle (1993)  (3.0★)
+   7. Disclosure (1994)  (3.0★)
+   8. Jurassic Park (1993)  (3.0★)
+   9. Ace Ventura: When Nature Calls (1995)  (4.0★)
+  10. Dances with Wolves (1990)  (3.0★)
+  11. True Lies (1994)  (4.0★)
+  12. Forrest Gump (1994)  (3.0★)
+  13. Apollo 13 (1995)  (4.0★)
+  14. Clear and Present Danger (1994)  (3.0★)
+  15. Batman (1989)  (3.0★)
+  16. Home Alone (1990)  (3.0★)
+  17. Speed (1994)  (3.0★)
+  18. Quiz Show (1994)  (2.0★)
+  19. Ace Ventura: Pet Detective (1994)  (5.0★)
+  20. Cliffhanger (1993)  (3.0★)
+
+----------------------------------------
+  Model: KNN  |  User: 1054  |  Top 5
+----------------------------------------
+Loading data and model 'knn' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/knn.joblib
+
+Top 5 recommendations for User 1054 (KNN):
+   1. Operation Homecoming: Writing the Wartime Experience (2007)  (score: 5.0)
+   2. Seagulls Laughter, The (Mávahlátur) (2001)  (score: 5.0)
+   3. Confessional, The (Confessionnal, Le) (1995)  (score: 5.0)
+   4. Doubt (2008)  (score: 5.0)
+   5. Bad Eggs (2003)  (score: 5.0)
+
+Top rated history driving these recommendations (KNN):
+   1. Ace Ventura: When Nature Calls (1995)  (4.0★)
+   2. Addams Family Values (1993)  (4.0★)
+   3. Firm, The (1993)  (2.0★)
+   4. Beverly Hills Cop III (1994)  (3.0★)
+
+----------------------------------------
+  Model: NEUMF  |  User: 1054  |  Top 5
+----------------------------------------
+Loading data and model 'neumf' (dataset: ml-10m)...
+  Loading cached splits from DATA/ml-10M100K
+  Loaded weights from CODE/weights_10m/neumf.joblib
+
+Top 5 recommendations for User 1054 (NEUMF):
+   1. Pulp Fiction (1994)  (score: 0.987)
+   2. Stargate (1994)  (score: 0.987)
+   3. Braveheart (1995)  (score: 0.984)
+   4. Shawshank Redemption, The (1994)  (score: 0.981)
+   5. Silence of the Lambs, The (1991)  (score: 0.98)
+
+Top rated history driving these recommendations (NEUMF):
+   1. Quiz Show (1994)  (2.0★)
+   2. Firm, The (1993)  (2.0★)
+   3. Sleepless in Seattle (1993)  (3.0★)
+   4. Beverly Hills Cop III (1994)  (3.0★)
+   5. Disclosure (1994)  (3.0★)
+   6. Jurassic Park (1993)  (3.0★)
+   7. Speed (1994)  (3.0★)
+   8. Home Alone (1990)  (3.0★)
+   9. Cliffhanger (1993)  (3.0★)
+  10. Forrest Gump (1994)  (3.0★)
+  11. While You Were Sleeping (1995)  (3.0★)
+  12. Clear and Present Danger (1994)  (3.0★)
+  13. Batman (1989)  (3.0★)
+  14. Dances with Wolves (1990)  (3.0★)
+  15. Addams Family Values (1993)  (4.0★)
+  16. Ace Ventura: When Nature Calls (1995)  (4.0★)
+  17. True Lies (1994)  (4.0★)
+  18. Die Hard: With a Vengeance (1995)  (4.0★)
+  19. Mrs. Doubtfire (1993)  (4.0★)
+  20. Fugitive, The (1993)  (4.0★)
+
