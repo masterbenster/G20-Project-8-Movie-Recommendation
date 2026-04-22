@@ -144,6 +144,36 @@ Each model outputs the top-N recommended movies along with the top-rated items f
 
 ---
 
+## Slopflix Web UI
+
+A Netflix-style web interface for browsing recommendations, built with FastAPI and HTMX.
+
+### Setup
+
+Create a `.env` file in the repo root with your [TMDB API key](https://www.themoviedb.org/settings/api) (free):
+
+```
+TMDB_API_KEY=your_key_here
+```
+
+Install the additional dependencies:
+
+```bash
+.venv/bin/pip install -r CODE/slopflix/requirements.txt
+```
+
+### Running
+
+```bash
+.venv/bin/uvicorn CODE.slopflix.main:app
+```
+
+Then open [http://localhost:8000](http://localhost:8000) in your browser.
+
+The server preloads the MovieLens 1M dataset and all three models (NeuMF, ALS, ItemKNN) on startup — this takes ~30 seconds but keeps every subsequent request fast. Movie posters are fetched from TMDB and cached in memory for the lifetime of the server process.
+
+---
+
 ## Evaluation
 
 Standalone evaluation scripts are in `EVALUATIONS/`:
