@@ -200,9 +200,12 @@ async def recommend(
         user_idx = user_map[user_id]
         recs     = _get_recs(mdl, user_idx, data["train"], data["movies"], data["ratings"], n=topn)
         history  = _get_history(mdl, user_idx, recs, data["train"], data["movies"])
-        posters  = await _fetch_all_posters([t for t, _ in recs])
 
-        rec_data = [(title, score, poster) for (title, score), poster in zip(recs, posters)]
+        rec_posters     = await _fetch_all_posters([t for t, _ in recs])
+        history_posters = await _fetch_all_posters([t for t, _ in history]) if history else []
+
+        rec_data     = [(title, score, poster) for (title, score), poster in zip(recs, rec_posters)]
+        history_data = [(title, rating, poster) for (title, rating), poster in zip(history, history_posters)]
 
         return templates.TemplateResponse(request, "results.html", {
             "user_id": user_id,
@@ -210,7 +213,7 @@ async def recommend(
             "dataset": dataset,
             "topn":    topn,
             "recs":    rec_data,
-            "history": history,
+            "history": history_data,
         })
 
     except FileNotFoundError as e:

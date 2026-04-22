@@ -113,6 +113,7 @@
   }
 
   .history-item {
+    position: relative;
     background: #2a2a2a;
     border-radius: 4px;
     padding: 0.3rem 0.65rem;
@@ -121,9 +122,33 @@
     align-items: center;
     gap: 0.5rem;
     color: #ccc;
+    cursor: default;
   }
 
+  .history-item:hover { background: #383838; }
+
   .history-stars { color: #FFC627; font-size: 0.72rem; }
+
+  .history-poster-tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    border-radius: 5px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  .history-poster-tooltip img {
+    width: 100%;
+    display: block;
+  }
+
+  .history-item:hover .history-poster-tooltip { display: block; }
 </style>
 
 <div class="results-header">
@@ -153,8 +178,13 @@
 <div class="history-section">
   <div class="history-title">Driving History &mdash; {{ model | upper }}</div>
   <div class="history-list">
-    {% for htitle, hrating in history %}
+    {% for htitle, hrating, hposter in history %}
     <div class="history-item">
+      {% if hposter %}
+      <div class="history-poster-tooltip">
+        <img src="{{ hposter }}" alt="{{ htitle }}" />
+      </div>
+      {% endif %}
       <span>{{ htitle }}</span>
       <span class="history-stars">{{ hrating }}&#9733;</span>
     </div>
