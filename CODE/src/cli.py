@@ -6,7 +6,7 @@ import argparse
 import pickle
 import pandas as pd
 import numpy as np
-from src.data import load_1m, load_splits, save_splits, time_split
+from src.data import load_1m, load_10m, load_splits, save_splits, time_split
 
 def get_recommendations(model, user_idx, train, movies, n=10, all_ratings=None):
     # Exclude everything the user has ever rated, not just their training items
@@ -35,23 +35,32 @@ def get_recommendations(model, user_idx, train, movies, n=10, all_ratings=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Movie Recommender CLI")
-    parser.add_argument("--user",  type=int, required=True, help="User ID (1-6040 for ml-1m)")
-    parser.add_argument("--model", type=str, default="als", choices=["als","knn","neumf"], help="Model to use")
-    parser.add_argument("--topn",  type=int, default=10, help="Number of recommendations")
+    parser.add_argument("--user",    type=int, required=True, help="User ID (1-6040 for ml-1m)")
+    parser.add_argument("--model",   type=str, default="als", choices=["als","knn","neumf"], help="Model to use")
+    parser.add_argument("--topn",    type=int, default=10, help="Number of recommendations")
+    parser.add_argument("--dataset", type=str, default="1m", choices=["1m","10m"], help="Dataset to use")
     args = parser.parse_args()
 
     import joblib
-    data_dir    = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
-    weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights")
-    dataset_dir = os.path.join(data_dir, "ml-1m")
+    data_dir = os.path.join(os.path.dirname(__file__), "..", "..", "DATA")
+    if args.dataset == "10m":
+        weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights_10m")
+        dataset_dir = os.path.join(data_dir, "ml-10M100K")
+    else:
+        weights_dir = os.path.join(os.path.dirname(__file__), "..", "weights")
+        dataset_dir = os.path.join(data_dir, "ml-1m")
 
     weight_path = os.path.join(weights_dir, f"{args.model}.joblib")
     if not os.path.exists(weight_path):
-        print(f"No saved weights found at {weight_path}. Run CODE/train.py first.")
+        print(f"No saved weights found at {weight_path}. Run CODE/train{'_10m' if args.dataset == '10m' else ''}.py first.")
         return
 
-    print(f"Loading data and model '{args.model}'...")
-    ratings, movies, users = load_1m(path=dataset_dir)
+    print(f"Loading data and model '{args.model}' (dataset: ml-{args.dataset})...")
+    if args.dataset == "10m":
+        ratings, movies, _ = load_10m(path=dataset_dir)
+        users = None
+    else:
+        ratings, movies, users = load_1m(path=dataset_dir)
 
     cached = load_splits(dataset_dir)
     if cached:
@@ -86,11 +95,9 @@ def main():
         print(f"  {i:2}. {title}  (score: {score})")
 
     if explanations:
-        print(f"\nWhy these recommendations ({args.model.upper()}):")
-        for i, ((title, _), reasons) in enumerate(zip(recs, explanations), 1):
-            print(f"\n  {i:2}. {title}")
-            for reason_title, rating in reasons:
-                print(f"        - {reason_title} ({rating:.1f}★)")
+        print(f"\nTop rated history driving these recommendations ({args.model.upper()}):")
+        for i, (title, rating) in enumerate(explanations, 1):
+            print(f"  {i:2}. {title}  ({rating:.1f}★)")
 
 
 if __name__ == "__main__":
